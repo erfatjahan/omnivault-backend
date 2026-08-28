@@ -1,7 +1,6 @@
 import { config } from "dotenv";
 config({ path: "./config/config.env" });
 import express from "express";
-import { v2 as cloudinary } from "cloudinary";
 import cors from "cors";
 import cookieParser from "cookie-parser";
 import fileUpload from "express-fileupload";
@@ -16,11 +15,33 @@ import Stripe from "stripe";
 import database from "./database/db.js";
 
 const app = express();
+
+const allowedOrigins = [
+  "http://localhost:5173",
+  "http://localhost:5174",
+  "http://localhost:3000",
+  "https://omnivault-dashboard.vercel.app",
+  "https://omnivault-frontend.vercel.app",
+  process.env.FRONTEND_URL,
+  process.env.DASHBOARD_URL,
+].filter(Boolean);
+
 app.use(
   cors({
-    origin: [process.env.FRONTEND_URL, process.env.DASHBOARD_URL],
-    methods: ["GET", "POST", "PUT", "DELETE"],
+    origin: function (origin, callback) {
+      if (!origin) return callback(null, true);
+
+      
+      if (allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      } else {
+        
+        return callback(new Error("CORS policy violation: Access denied"));
+      }
+    },
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     credentials: true,
+    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
   })
 );
 
@@ -40,12 +61,9 @@ app.post(
       return res.status(400).send(`Webhook Error: ${error.message || error}`);
     }
 
-    // Handling the Event
-
     if (event.type === "payment_intent.succeeded") {
       const paymentIntent_client_secret = event.data.object.client_secret;
       try {
-        // FINDING AND UPDATED PAYMENT
         const updatedPaymentStatus = "Paid";
         const paymentTableUpdateResult = await database.query(
           `UPDATE payments SET payment_status = $1 WHERE payment_intent_id = $2 RETURNING *`,
@@ -56,17 +74,13 @@ app.post(
           [paymentTableUpdateResult.rows[0].order_id]
         );
 
-        // Reduce Stock For Each Product
         const orderId = paymentTableUpdateResult.rows[0].order_id;
 
         const { rows: orderedItems } = await database.query(
-          `
-            SELECT product_id, quantity FROM order_items WHERE order_id = $1
-          `,
+          `SELECT product_id, quantity FROM order_items WHERE order_id = $1`,
           [orderId]
         );
 
-        // For each ordered item, reduce the product stock
         for (const item of orderedItems) {
           await database.query(
             `UPDATE products SET stock = stock - $1 WHERE id = $2`,
@@ -97,8 +111,8 @@ app.use(
 app.use("/api/v1/auth", authRouter);
 app.use("/api/v1/product", productRouter);
 app.use("/api/v1/admin", adminRouter);
-app.use("/api/v1/order",orderRouter);
-app.use("/api/v1/payment",paymentRoutes);
+app.use("/api/v1/order", orderRouter);
+app.use("/api/v1/payment", paymentRoutes);
 
 createTables();
 
