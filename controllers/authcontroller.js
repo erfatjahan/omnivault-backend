@@ -21,7 +21,7 @@ export const register = catchAsyncErrors(async (req, res, next) => {
   }
 
   const isAlreadyRegistered = await database.query(
-    `SELECT * FROM users WHERE email = $1`,
+    "SELECT * FROM users WHERE LOWER(email) = LOWER($1)",
     [email]
   );
 
@@ -32,22 +32,26 @@ export const register = catchAsyncErrors(async (req, res, next) => {
   }
 
   const hashedPassword = await bcrypt.hash(password, 10);
+  
   const user = await database.query(
-    "INSERT INTO users (name, email, password) VALUES ($1, $2, $3) RETURNING *",
-    [name, email, hashedPassword]
+    "INSERT INTO users (name, email, password, role) VALUES ($1, LOWER($2), $3, $4) RETURNING *",
+    [name, email, hashedPassword, "user"]
   );
+  delete user.rows[0].password;
   sendToken(user.rows[0], 201, "User registered successfully", res);
 });
-
 
 export const login = catchAsyncErrors(async (req, res, next) => {
   const { email, password } = req.body;
   if (!email || !password) {
     return next(new ErrorHandler("Please provide email and password.", 400));
   }
-  const user = await database.query(`SELECT * FROM users WHERE email = $1`, [
-    email,
-  ]);
+
+  const user = await database.query(
+    "SELECT * FROM users WHERE LOWER(email) = LOWER($1)",
+    [email]
+  );
+  
   if (user.rows.length === 0) {
     return next(new ErrorHandler("Invalid email or password.", 401));
   }
@@ -55,18 +59,24 @@ export const login = catchAsyncErrors(async (req, res, next) => {
   if (!isPasswordMatch) {
     return next(new ErrorHandler("Invalid email or password.", 401));
   }
+
+  delete user.rows[0].password;
   sendToken(user.rows[0], 200, "Logged In.", res);
 });
 
-
 export const getUser = catchAsyncErrors(async (req, res, next) => {
-  const { user } = req;
+  if (!req.user) {
+    return next(new ErrorHandler("User session not found.", 401));
+  }
+  
+  const user = { ...req.user };
+  delete user.password;
+
   res.status(200).json({
     success: true,
     user,
   });
 });
-
 
 export const logout = catchAsyncErrors(async (req, res, next) => {
   res
@@ -74,6 +84,8 @@ export const logout = catchAsyncErrors(async (req, res, next) => {
     .cookie("token", "", {
       expires: new Date(Date.now()),
       httpOnly: true,
+      secure: true,
+      sameSite: "none",
     })
     .json({
       success: true,
@@ -91,7 +103,7 @@ export const forgotPassword = catchAsyncErrors(async (req, res, next) => {
     "http://localhost:5173";
 
   let userResult = await database.query(
-    `SELECT * FROM users WHERE email = $1`,
+    "SELECT * FROM users WHERE LOWER(email) = LOWER($1)",
     [email]
   );
   if (userResult.rows.length === 0) {
@@ -102,7 +114,7 @@ export const forgotPassword = catchAsyncErrors(async (req, res, next) => {
     generateResetPasswordToken();
 
   await database.query(
-    `UPDATE users SET reset_password_token = $1, reset_password_expire = to_timestamp($2) WHERE email = $3`,
+    "UPDATE users SET reset_password_token = $1, reset_password_expire = to_timestamp($2) WHERE LOWER(email) = LOWER($3)",
     [hashedToken, resetPasswordExpireTime / 1000, email]
   );
 
@@ -121,7 +133,7 @@ export const forgotPassword = catchAsyncErrors(async (req, res, next) => {
     });
   } catch (error) {
     await database.query(
-      `UPDATE users SET reset_password_token = NULL, reset_password_expire = NULL WHERE email = $1`,
+      "UPDATE users SET reset_password_token = NULL, reset_password_expire = NULL WHERE LOWER(email) = LOWER($1)",
       [email]
     );
     return next(new ErrorHandler("Email could not be sent.", 500));
@@ -134,6 +146,7 @@ export const resetPassword = catchAsyncErrors(async (req, res, next) => {
     .createHash("sha256")
     .update(token)
     .digest("hex");
+
   const user = await database.query(
     "SELECT * FROM users WHERE reset_password_token = $1 AND reset_password_expire > NOW()",
     [resetPasswordToken]
@@ -157,9 +170,11 @@ export const resetPassword = catchAsyncErrors(async (req, res, next) => {
   const hashedPassword = await bcrypt.hash(req.body.password, 10);
 
   const updatedUser = await database.query(
-    `UPDATE users SET password = $1, reset_password_token = NULL, reset_password_expire = NULL WHERE id = $2 RETURNING *`,
+    "UPDATE users SET password = $1, reset_password_token = NULL, reset_password_expire = NULL WHERE id = $2 RETURNING *",
     [hashedPassword, user.rows[0].id]
   );
+
+  delete updatedUser.rows[0].password;
   sendToken(updatedUser.rows[0], 200, "Password reset successfully", res);
 });
 
@@ -211,7 +226,8 @@ export const updateProfile = catchAsyncErrors(async (req, res, next) => {
   if (name.trim().length === 0 || email.trim().length === 0) {
     return next(new ErrorHandler("Name and email cannot be empty.", 400));
   }
-  let avatarData = {};
+
+  let avatarData = null;
   if (req.files && req.files.avatar) {
     const { avatar } = req.files;
     if (req.user?.avatar?.public_id) {
@@ -233,18 +249,19 @@ export const updateProfile = catchAsyncErrors(async (req, res, next) => {
   }
 
   let user;
-  if (Object.keys(avatarData).length === 0) {
+  if (!avatarData) {
     user = await database.query(
-      "UPDATE users SET name = $1, email = $2 WHERE id = $3 RETURNING *",
+      "UPDATE users SET name = $1, email = LOWER($2) WHERE id = $3 RETURNING *",
       [name, email, req.user.id]
     );
   } else {
     user = await database.query(
-      "UPDATE users SET name = $1, email = $2, avatar = $3 WHERE id = $4 RETURNING *",
-      [name, email, avatarData, req.user.id]
+      "UPDATE users SET name = $1, email = LOWER($2), avatar = $3 WHERE id = $4 RETURNING *",
+      [name, email, JSON.stringify(avatarData), req.user.id]
     );
   }
 
+  delete user.rows[0].password;
   res.status(200).json({
     success: true,
     message: "Profile updated successfully.",
@@ -254,7 +271,7 @@ export const updateProfile = catchAsyncErrors(async (req, res, next) => {
 
 export const getAllUsers = catchAsyncErrors(async (req, res, next) => {
   const result = await database.query(
-    `SELECT id, name, email, role, avatar, created_at FROM users ORDER BY created_at DESC`
+    "SELECT id, name, email, role, avatar, created_at FROM users ORDER BY created_at DESC"
   );
 
   res.status(200).json({
@@ -270,35 +287,35 @@ export const deleteUser = catchAsyncErrors(async (req, res, next) => {
   try {
     await client.query("BEGIN");
     const userOrders = await client.query(
-      `SELECT id FROM orders WHERE buyer_id::text = $1::text`,
+      "SELECT id FROM orders WHERE buyer_id::text = $1::text",
       [id]
     );
     const orderIds = userOrders.rows.map((r) => r.id);
 
     if (orderIds.length > 0) {
       await client.query(
-        `DELETE FROM order_items WHERE order_id::text = ANY($1::text[])`,
+        "DELETE FROM order_items WHERE order_id::text = ANY($1::text[])",
         [orderIds]
       );
       await client.query(
-        `DELETE FROM shipping_info WHERE order_id::text = ANY($1::text[])`,
+        "DELETE FROM shipping_info WHERE order_id::text = ANY($1::text[])",
         [orderIds]
       );
       await client.query(
-        `DELETE FROM payments WHERE order_id::text = ANY($1::text[])`,
+        "DELETE FROM payments WHERE order_id::text = ANY($1::text[])",
         [orderIds]
       );
       await client.query(
-        `DELETE FROM orders WHERE buyer_id::text = $1::text`,
+        "DELETE FROM orders WHERE buyer_id::text = $1::text",
         [id]
       );
     }
 
-    await client.query(`DELETE FROM reviews WHERE user_id::text = $1::text`, [
+    await client.query("DELETE FROM reviews WHERE user_id::text = $1::text", [
       id,
     ]);
     const result = await client.query(
-      `DELETE FROM users WHERE id::text = $1::text RETURNING *`,
+      "DELETE FROM users WHERE id::text = $1::text RETURNING *",
       [id]
     );
 
