@@ -21,7 +21,7 @@ const allowedOrigins = [
   "http://localhost:5174",
   "http://localhost:3000",
   "https://omnivault-dashboard.vercel.app",
-  "https://omnivault-frontend.vercel.app",
+  "https://omnivault-frontend-one.vercel.app",
   process.env.FRONTEND_URL,
   process.env.DASHBOARD_URL,
 ].filter(Boolean);
@@ -30,7 +30,6 @@ app.use(
   cors({
     origin: function (origin, callback) {
       if (!origin) return callback(null, true);
-
       
       if (allowedOrigins.includes(origin)) {
         return callback(null, true);
