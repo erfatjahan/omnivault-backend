@@ -9,20 +9,11 @@ import { sendEmail } from "../utils/sendemail.js";
 import crypto from "crypto";
 import { v2 as cloudinary } from "cloudinary";
 
-const DEFAULT_AVATAR_PUBLIC_ID = "wsospe2rht8njooknoqr";
-const DEFAULT_AVATAR_URL =
-  "https://res.cloudinary.com/dxxyl4xnv/image/upload/v1788003882/wsospe2rht8njooknoqr.jpg";
-
 export const register = catchAsyncErrors(async (req, res, next) => {
   const { name, email, password } = req.body;
-
   if (!name || !email || !password) {
     return next(new ErrorHandler("Please provide all required fields.", 400));
   }
-
-  const cleanName = name.trim();
-  const cleanEmail = email.trim().toLowerCase();
-
   if (password.length < 8 || password.length > 16) {
     return next(
       new ErrorHandler("Password must be between 8 and 16 characters.", 400)
@@ -30,8 +21,8 @@ export const register = catchAsyncErrors(async (req, res, next) => {
   }
 
   const isAlreadyRegistered = await database.query(
-    "SELECT id FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1",
-    [cleanEmail]
+    "SELECT * FROM users WHERE LOWER(email) = LOWER($1)",
+    [email]
   );
 
   if (isAlreadyRegistered.rows.length > 0) {
@@ -41,19 +32,12 @@ export const register = catchAsyncErrors(async (req, res, next) => {
   }
 
   const hashedPassword = await bcrypt.hash(password, 10);
-
-  const defaultAvatar = JSON.stringify({
-    public_id: DEFAULT_AVATAR_PUBLIC_ID,
-    url: DEFAULT_AVATAR_URL,
-  });
-
+  
   const user = await database.query(
-    `INSERT INTO users (name, email, password, role, avatar) 
-     VALUES ($1, $2, $3, $4, $5) 
-     RETURNING id, name, email, role, avatar, created_at`,
-    [cleanName, cleanEmail, hashedPassword, "user", defaultAvatar]
+    "INSERT INTO users (name, email, password, role) VALUES ($1, LOWER($2), $3, $4) RETURNING *",
+    [name, email, hashedPassword, "user"]
   );
-
+  delete user.rows[0].password;
   sendToken(user.rows[0], 201, "User registered successfully", res);
 });
 
@@ -63,33 +47,28 @@ export const login = catchAsyncErrors(async (req, res, next) => {
     return next(new ErrorHandler("Please provide email and password.", 400));
   }
 
-  const cleanEmail = email.trim().toLowerCase();
-
-  const userResult = await database.query(
-    "SELECT * FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1",
-    [cleanEmail]
+  const user = await database.query(
+    "SELECT * FROM users WHERE LOWER(email) = LOWER($1)",
+    [email]
   );
-
-  if (userResult.rows.length === 0) {
+  
+  if (user.rows.length === 0) {
     return next(new ErrorHandler("Invalid email or password.", 401));
   }
-
-  const user = userResult.rows[0];
-
-  const isPasswordMatch = await bcrypt.compare(password, user.password);
+  const isPasswordMatch = await bcrypt.compare(password, user.rows[0].password);
   if (!isPasswordMatch) {
     return next(new ErrorHandler("Invalid email or password.", 401));
   }
 
-  delete user.password;
-  sendToken(user, 200, "Logged In.", res);
+  delete user.rows[0].password;
+  sendToken(user.rows[0], 200, "Logged In.", res);
 });
 
 export const getUser = catchAsyncErrors(async (req, res, next) => {
   if (!req.user) {
     return next(new ErrorHandler("User session not found.", 401));
   }
-
+  
   const user = { ...req.user };
   delete user.password;
 
@@ -123,11 +102,9 @@ export const forgotPassword = catchAsyncErrors(async (req, res, next) => {
     process.env.FRONTEND_URL ||
     "http://localhost:5173";
 
-  const cleanEmail = email?.trim().toLowerCase();
-
-  const userResult = await database.query(
+  let userResult = await database.query(
     "SELECT * FROM users WHERE LOWER(email) = LOWER($1)",
-    [cleanEmail]
+    [email]
   );
   if (userResult.rows.length === 0) {
     return next(new ErrorHandler("User not found with this email.", 404));
@@ -138,7 +115,7 @@ export const forgotPassword = catchAsyncErrors(async (req, res, next) => {
 
   await database.query(
     "UPDATE users SET reset_password_token = $1, reset_password_expire = to_timestamp($2) WHERE LOWER(email) = LOWER($3)",
-    [hashedToken, resetPasswordExpireTime / 1000, cleanEmail]
+    [hashedToken, resetPasswordExpireTime / 1000, email]
   );
 
   const resetPasswordUrl = `${frontendUrl}/password/reset/${resetToken}`;
@@ -157,7 +134,7 @@ export const forgotPassword = catchAsyncErrors(async (req, res, next) => {
   } catch (error) {
     await database.query(
       "UPDATE users SET reset_password_token = NULL, reset_password_expire = NULL WHERE LOWER(email) = LOWER($1)",
-      [cleanEmail]
+      [email]
     );
     return next(new ErrorHandler("Email could not be sent.", 500));
   }
@@ -193,10 +170,11 @@ export const resetPassword = catchAsyncErrors(async (req, res, next) => {
   const hashedPassword = await bcrypt.hash(req.body.password, 10);
 
   const updatedUser = await database.query(
-    "UPDATE users SET password = $1, reset_password_token = NULL, reset_password_expire = NULL WHERE id = $2 RETURNING id, name, email, role, avatar, created_at",
+    "UPDATE users SET password = $1, reset_password_token = NULL, reset_password_expire = NULL WHERE id = $2 RETURNING *",
     [hashedPassword, user.rows[0].id]
   );
 
+  delete updatedUser.rows[0].password;
   sendToken(updatedUser.rows[0], 200, "Password reset successfully", res);
 });
 
@@ -205,21 +183,10 @@ export const updatePassword = catchAsyncErrors(async (req, res, next) => {
   if (!currentPassword || !newPassword || !confirmNewPassword) {
     return next(new ErrorHandler("Please provide all required fields.", 400));
   }
-
-  const userResult = await database.query(
-    "SELECT password FROM users WHERE id::text = $1::text",
-    [req.user.id]
-  );
-
-  if (userResult.rows.length === 0) {
-    return next(new ErrorHandler("User not found.", 404));
-  }
-
   const isPasswordMatch = await bcrypt.compare(
     currentPassword,
-    userResult.rows[0].password
+    req.user.password
   );
-
   if (!isPasswordMatch) {
     return next(new ErrorHandler("Current password is incorrect.", 401));
   }
@@ -240,7 +207,7 @@ export const updatePassword = catchAsyncErrors(async (req, res, next) => {
 
   const hashedPassword = await bcrypt.hash(newPassword, 10);
 
-  await database.query("UPDATE users SET password = $1 WHERE id::text = $2::text", [
+  await database.query("UPDATE users SET password = $1 WHERE id = $2", [
     hashedPassword,
     req.user.id,
   ]);
@@ -256,29 +223,16 @@ export const updateProfile = catchAsyncErrors(async (req, res, next) => {
   if (!name || !email) {
     return next(new ErrorHandler("Please provide all required fields.", 400));
   }
-
-  const cleanName = name.trim();
-  const cleanEmail = email.trim().toLowerCase();
+  if (name.trim().length === 0 || email.trim().length === 0) {
+    return next(new ErrorHandler("Name and email cannot be empty.", 400));
+  }
 
   let avatarData = null;
+  
   if (req.files && req.files.avatar) {
     const { avatar } = req.files;
-
-    let currentAvatar = req.user?.avatar;
-    if (typeof currentAvatar === "string") {
-      try {
-        currentAvatar = JSON.parse(currentAvatar);
-      } catch (e) {
-        currentAvatar = null;
-      }
-    }
-
-    if (
-      currentAvatar?.public_id &&
-      currentAvatar.public_id !== DEFAULT_AVATAR_PUBLIC_ID &&
-      currentAvatar.public_id !== ""
-    ) {
-      await cloudinary.uploader.destroy(currentAvatar.public_id);
+    if (req.user?.avatar?.public_id) {
+      await cloudinary.uploader.destroy(req.user.avatar.public_id);
     }
 
     const newProfileImage = await cloudinary.uploader.upload(
@@ -295,19 +249,32 @@ export const updateProfile = catchAsyncErrors(async (req, res, next) => {
     };
   }
 
-  let user;
-  if (!avatarData) {
-    user = await database.query(
-      "UPDATE users SET name = $1, email = $2 WHERE id::text = $3::text RETURNING id, name, email, role, avatar, created_at",
-      [cleanName, cleanEmail, req.user.id]
-    );
-  } else {
-    user = await database.query(
-      "UPDATE users SET name = $1, email = $2, avatar = $3 WHERE id::text = $4::text RETURNING id, name, email, role, avatar, created_at",
-      [cleanName, cleanEmail, JSON.stringify(avatarData), req.user.id]
-    );
-  }
-
+  // let user;
+  // if (!avatarData) {
+  //   user = await database.query(
+  //     "UPDATE users SET name = $1, email = LOWER($2) WHERE id = $3 RETURNING *",
+  //     [name, email, req.user.id]
+  //   );
+  // } else {
+  //   user = await database.query(
+  //     "UPDATE users SET name = $1, email = LOWER($2), avatar = $3 WHERE id = $4 RETURNING *",
+  //     [name, email, JSON.stringify(avatarData), req.user.id]
+  //   );
+  // }
+let user ;
+if(Object.keys(avatarData).length===0){
+  user=await database.query(
+"    UPDATE users SET =$1,email=$2 WHERE id=$3 RETURNING *"
+[name,email,avatarData,req.user.id]  
+);
+}
+else {
+   user = await database.query(
+     "UPDATE users SET name = $1, email = LOWER($2), avatar = $3 WHERE id = $4 RETURNING *",
+   [name, email, JSON.stringify(avatarData), req.user.id]
+  );
+   }
+  delete user.rows[0].password;
   res.status(200).json({
     success: true,
     message: "Profile updated successfully.",
@@ -371,25 +338,6 @@ export const deleteUser = catchAsyncErrors(async (req, res, next) => {
     }
 
     await client.query("COMMIT");
-
-    const deletedUser = result.rows[0];
-    let userAvatar = deletedUser?.avatar;
-    if (typeof userAvatar === "string") {
-      try {
-        userAvatar = JSON.parse(userAvatar);
-      } catch (e) {
-        userAvatar = null;
-      }
-    }
-
-    if (
-      userAvatar?.public_id &&
-      userAvatar.public_id !== DEFAULT_AVATAR_PUBLIC_ID &&
-      userAvatar.public_id !== ""
-    ) {
-      await cloudinary.uploader.destroy(userAvatar.public_id);
-    }
-
     res.status(200).json({
       success: true,
       message: "User and all associated records deleted successfully.",
