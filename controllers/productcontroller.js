@@ -3,13 +3,12 @@ import ErrorHandler from "../middlewares/errorMiddleware.js";
 import { v2 as cloudinary } from "cloudinary";
 import database from "../database/db.js";
 import { getAIRecommendation } from "../utils/aigetrecommendation.js";
-import { GoogleGenerativeAI } from "@google/generative-ai";
 
 export const createProduct = catchAsyncErrors(async (req, res, next) => {
   const { name, description, price, category, stock } = req.body;
-  const created_by = req.user.id;
+  const created_by = req.user?.id;
 
-  if (!name || !description || !price || !category || !stock) {
+  if (!name || !description || !price || !category || stock === undefined) {
     return next(
       new ErrorHandler("Please provide complete product details.", 400)
     );
@@ -40,9 +39,9 @@ export const createProduct = catchAsyncErrors(async (req, res, next) => {
     [
       name,
       description,
-      price,
+      Number(price),
       category,
-      stock,
+      Number(stock),
       JSON.stringify(uploadedImages),
       created_by,
     ]
@@ -57,97 +56,82 @@ export const createProduct = catchAsyncErrors(async (req, res, next) => {
 
 export const fetchAllProducts = catchAsyncErrors(async (req, res, next) => {
   const { availability, price, category, ratings, search } = req.query;
-  const page = parseInt(req.query.page) || 1;
-  const limit = 10;
+  const page = Math.max(1, parseInt(req.query.page) || 1);
+  const limit = Math.max(1, parseInt(req.query.limit) || 10);
   const offset = (page - 1) * limit;
 
   const conditions = [];
-  let values = [];
+  const values = [];
   let index = 1;
 
-  let paginationPlaceholders = {};
-
-  // Filter products by availability
   if (availability === "in-stock") {
-    conditions.push(`stock > 5`);
+    conditions.push(`p.stock > 5`);
   } else if (availability === "limited") {
-    conditions.push(`stock > 0 AND stock <= 5`);
+    conditions.push(`p.stock > 0 AND p.stock <= 5`);
   } else if (availability === "out-of-stock") {
-    conditions.push(`stock = 0`);
+    conditions.push(`p.stock = 0`);
   }
 
-  // Filter products by price
-  if (price) {
-    const [minPrice, maxPrice] = price.split("-");
-    if (minPrice && maxPrice) {
-      conditions.push(`price BETWEEN $${index} AND $${index + 1}`);
-      values.push(minPrice, maxPrice);
-      index += 2;
+  if (price !== undefined && price !== "") {
+    if (typeof price === "string" && price.includes("-")) {
+      const [min, max] = price.split("-").map((v) => Number(v.trim()));
+      if (!isNaN(min) && !isNaN(max)) {
+        conditions.push(`p.price >= $${index} AND p.price <= $${index + 1}`);
+        values.push(min, max);
+        index += 2;
+      }
+    } else if (!isNaN(Number(price))) {
+      conditions.push(`p.price <= $${index}`);
+      values.push(Number(price));
+      index++;
     }
   }
 
-  // Filter products by category
-  if (category) {
-    conditions.push(`category ILIKE $${index}`);
-    values.push(`%${category}%`);
+  if (category && category.trim() !== "") {
+    conditions.push(`p.category ILIKE $${index}`);
+    values.push(`%${category.trim()}%`);
     index++;
   }
 
-  // Filter products by rating
-  if (ratings) {
-    conditions.push(`ratings >= $${index}`);
-    values.push(ratings);
+  if (ratings && !isNaN(Number(ratings))) {
+    conditions.push(`p.ratings >= $${index}`);
+    values.push(Number(ratings));
     index++;
   }
 
-  // Add search query
-  if (search) {
-    conditions.push(
-      `(p.name ILIKE $${index} OR p.description ILIKE $${index})`
-    );
-    values.push(`%${search}%`);
+  if (search && search.trim() !== "") {
+    conditions.push(`(p.name ILIKE $${index} OR p.description ILIKE $${index})`);
+    values.push(`%${search.trim()}%`);
     index++;
   }
 
-  const whereClause = conditions.length
-    ? `WHERE ${conditions.join(" AND ")}`
-    : "";
+  const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
 
-  // Get count of filtered products
-  const totalProductsResult = await database.query(
-    `SELECT COUNT(*) FROM products p ${whereClause}`,
-    values
-  );
+  const countQuery = `SELECT COUNT(DISTINCT p.id) FROM products p ${whereClause}`;
+  const totalProductsResult = await database.query(countQuery, values);
+  const totalProducts = parseInt(totalProductsResult.rows[0]?.count || 0);
 
-  const totalProducts = parseInt(totalProductsResult.rows[0].count);
+  const fetchValues = [...values, limit, offset];
+  const limitIndex = index;
+  const offsetIndex = index + 1;
 
-  paginationPlaceholders.limit = `$${index}`;
-  values.push(limit);
-  index++;
 
-  paginationPlaceholders.offset = `$${index}`;
-  values.push(offset);
-  index++;
-
-  // FETCH WITH REVIEWS
   const query = `
     SELECT p.*, 
-    COUNT(r.id) AS review_count 
+    COALESCE(COUNT(r.id), 0) AS review_count 
     FROM products p 
     LEFT JOIN reviews r ON p.id = r.product_id
     ${whereClause}
     GROUP BY p.id
     ORDER BY p.created_at DESC
-    LIMIT ${paginationPlaceholders.limit}
-    OFFSET ${paginationPlaceholders.offset}
-    `;
+    LIMIT $${limitIndex}
+    OFFSET $${offsetIndex}
+  `;
 
-  const result = await database.query(query, values);
-
-  // QUERY FOR FETCHING NEW PRODUCTS
+  const result = await database.query(query, fetchValues);
   const newProductsQuery = `
     SELECT p.*,
-    COUNT(r.id) AS review_count
+    COALESCE(COUNT(r.id), 0) AS review_count
     FROM products p
     LEFT JOIN reviews r ON p.id = r.product_id
     WHERE p.created_at >= NOW() - INTERVAL '30 days'
@@ -157,10 +141,9 @@ export const fetchAllProducts = catchAsyncErrors(async (req, res, next) => {
   `;
   const newProductsResult = await database.query(newProductsQuery);
 
-  // QUERY FOR FETCHING TOP RATING PRODUCTS (rating >= 4.5)
   const topRatedQuery = `
     SELECT p.*,
-    COUNT(r.id) AS review_count
+    COALESCE(COUNT(r.id), 0) AS review_count
     FROM products p
     LEFT JOIN reviews r ON p.id = r.product_id
     WHERE p.ratings >= 4.5
@@ -174,29 +157,35 @@ export const fetchAllProducts = catchAsyncErrors(async (req, res, next) => {
     success: true,
     products: result.rows,
     totalProducts,
+    page,
+    totalPages: Math.ceil(totalProducts / limit),
     newProducts: newProductsResult.rows,
     topRatedProducts: topRatedResult.rows,
   });
 });
+
 export const updateProduct = catchAsyncErrors(async (req, res, next) => {
   const { productId } = req.params;
   const { name, description, price, category, stock } = req.body;
 
-  if (!name || !description || !price || !category || !stock) {
+  if (!name || !description || price === undefined || !category || stock === undefined) {
     return next(
       new ErrorHandler("Please provide complete product details.", 400)
     );
   }
+  
   const product = await database.query("SELECT * FROM products WHERE id = $1", [
     productId,
   ]);
   if (product.rows.length === 0) {
     return next(new ErrorHandler("Product not found.", 404));
   }
+
   const result = await database.query(
     `UPDATE products SET name = $1, description = $2, price = $3, category = $4, stock = $5 WHERE id = $6 RETURNING *`,
-    [name, description, price, category, stock, productId]
+    [name, description, Number(price), category, Number(stock), productId]
   );
+
   res.status(200).json({
     success: true,
     message: "Product updated successfully.",
@@ -216,19 +205,34 @@ export const deleteProduct = catchAsyncErrors(async (req, res, next) => {
 
   const images = product.rows[0].images;
 
-  const deleteResult = await database.query(
-    "DELETE FROM products WHERE id = $1 RETURNING *",
-    [productId]
-  );
+  const client = await database.connect();
+  try {
+    await client.query("BEGIN");
 
-  if (deleteResult.rows.length === 0) {
-    return next(new ErrorHandler("Failed to delete product.", 500));
+    await client.query("DELETE FROM reviews WHERE product_id = $1", [productId]);
+    
+    const deleteResult = await client.query(
+      "DELETE FROM products WHERE id = $1 RETURNING *",
+      [productId]
+    );
+
+    if (deleteResult.rows.length === 0) {
+      await client.query("ROLLBACK");
+      return next(new ErrorHandler("Failed to delete product.", 500));
+    }
+
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    return next(new ErrorHandler(err.message || "Failed to delete product.", 500));
+  } finally {
+    client.release();
   }
-
-  // Delete images from Cloudinary
-  if (images && images.length > 0) {
+  if (images && Array.isArray(images) && images.length > 0) {
     for (const image of images) {
-      await cloudinary.uploader.destroy(image.public_id);
+      if (image?.public_id) {
+        await cloudinary.uploader.destroy(image.public_id);
+      }
     }
   }
 
@@ -243,26 +247,33 @@ export const fetchSingleProduct = catchAsyncErrors(async (req, res, next) => {
 
   const result = await database.query(
     `
-        SELECT p.*,
-        COALESCE(
+      SELECT p.*,
+      COALESCE(
         json_agg(
-        json_build_object(
+          json_build_object(
             'review_id', r.id,
             'rating', r.rating,
             'comment', r.comment,
             'reviewer', json_build_object(
-            'id', u.id,
-            'name', u.name,
-            'avatar', u.avatar
-            )) 
-        ) FILTER (WHERE r.id IS NOT NULL), '[]') AS reviews
-         FROM products p
-         LEFT JOIN reviews r ON p.id = r.product_id
-         LEFT JOIN users u ON r.user_id = u.id
-         WHERE p.id  = $1
-         GROUP BY p.id`,
+              'id', u.id,
+              'name', u.name,
+              'avatar', u.avatar
+            )
+          )
+        ) FILTER (WHERE r.id IS NOT NULL), '[]'
+      ) AS reviews
+      FROM products p
+      LEFT JOIN reviews r ON p.id = r.product_id
+      LEFT JOIN users u ON r.user_id = u.id
+      WHERE p.id = $1
+      GROUP BY p.id
+    `,
     [productId]
   );
+
+  if (result.rows.length === 0) {
+    return next(new ErrorHandler("Product not found.", 404));
+  }
 
   res.status(200).json({
     success: true,
@@ -277,6 +288,7 @@ export const postProductReview = catchAsyncErrors(async (req, res, next) => {
   if (!rating || !comment) {
     return next(new ErrorHandler("Please provide rating and comment.", 400));
   }
+
   const purchasheCheckQuery = `
     SELECT oi.product_id
     FROM order_items oi
@@ -308,14 +320,11 @@ export const postProductReview = catchAsyncErrors(async (req, res, next) => {
   }
 
   const isAlreadyReviewed = await database.query(
-    `
-    SELECT * FROM reviews WHERE product_id = $1 AND user_id = $2
-    `,
+    `SELECT * FROM reviews WHERE product_id = $1 AND user_id = $2`,
     [productId, req.user.id]
   );
 
   let review;
-
   if (isAlreadyReviewed.rows.length > 0) {
     review = await database.query(
       "UPDATE reviews SET rating = $1, comment = $2 WHERE product_id = $3 AND user_id = $4 RETURNING *",
@@ -333,12 +342,10 @@ export const postProductReview = catchAsyncErrors(async (req, res, next) => {
     [productId]
   );
 
-  const newAvgRating = allReviews.rows[0].avg_rating;
+  const newAvgRating = parseFloat(allReviews.rows[0]?.avg_rating || 0).toFixed(1);
 
   const updatedProduct = await database.query(
-    `
-        UPDATE products SET ratings = $1 WHERE id = $2 RETURNING *
-        `,
+    `UPDATE products SET ratings = $1 WHERE id = $2 RETURNING *`,
     [newAvgRating, productId]
   );
 
@@ -366,12 +373,10 @@ export const deleteReview = catchAsyncErrors(async (req, res, next) => {
     [productId]
   );
 
-  const newAvgRating = allReviews.rows[0].avg_rating;
+  const newAvgRating = parseFloat(allReviews.rows[0]?.avg_rating || 0).toFixed(1);
 
   const updatedProduct = await database.query(
-    `
-        UPDATE products SET ratings = $1 WHERE id = $2 RETURNING *
-        `,
+    `UPDATE products SET ratings = $1 WHERE id = $2 RETURNING *`,
     [newAvgRating, productId]
   );
 
@@ -383,139 +388,6 @@ export const deleteReview = catchAsyncErrors(async (req, res, next) => {
   });
 });
 
-// export const fetchAIFilteredProducts = catchAsyncErrors(
-//   async (req, res, next) => {
-//     const { userPrompt } = req.body;
-//     if (!userPrompt) {
-//       return next(new ErrorHandler("Provide a valid prompt.", 400));
-//     }
-
-//     const filterKeywords = (query) => {
-//       const stopWords = new Set([
-//         "the",
-//         "they",
-//         "them",
-//         "then",
-//         "I",
-//         "we",
-//         "you",
-//         "he",
-//         "she",
-//         "it",
-//         "is",
-//         "a",
-//         "an",
-//         "of",
-//         "and",
-//         "or",
-//         "to",
-//         "for",
-//         "from",
-//         "on",
-//         "who",
-//         "whom",
-//         "why",
-//         "when",
-//         "which",
-//         "with",
-//         "this",
-//         "that",
-//         "in",
-//         "at",
-//         "by",
-//         "be",
-//         "not",
-//         "was",
-//         "were",
-//         "has",
-//         "have",
-//         "had",
-//         "do",
-//         "does",
-//         "did",
-//         "so",
-//         "some",
-//         "any",
-//         "how",
-//         "can",
-//         "could",
-//         "should",
-//         "would",
-//         "there",
-//         "here",
-//         "just",
-//         "than",
-//         "because",
-//         "but",
-//         "its",
-//         "it's",
-//         "if",
-//         ".",
-//         ",",
-//         "!",
-//         "?",
-//         ">",
-//         "<",
-//         ";",
-//         "`",
-//         "1",
-//         "2",
-//         "3",
-//         "4",
-//         "5",
-//         "6",
-//         "7",
-//         "8",
-//         "9",
-//         "10",
-//       ]);
-
-//       return query
-//         .toLowerCase()
-//         .replace(/[^\w\s]/g, "")
-//         .split(/\s+/)
-//         .filter((word) => !stopWords.has(word))
-//         .map((word) => `%${word}%`);
-//     };
-
-//     const keywords = filterKeywords(userPrompt);
-//     // STEP 1: Basic SQL Filtering
-//     const result = await database.query(
-//       `
-//         SELECT * FROM products
-//         WHERE name ILIKE ANY($1)
-//         OR description ILIKE ANY($1)
-//         OR category ILIKE ANY($1)
-//         LIMIT 200;     
-//         `,
-//       [keywords]
-//     );
-
-//     const filteredProducts = result.rows;
-
-//     if (filteredProducts.length === 0) {
-//       return res.status(200).json({
-//         success: true,
-//         message: "No products found matching your prompt.",
-//         products: [],
-//       });
-//     }
-
-//     // STEP 2: AI FILTERING
-//     const { success, products } = await getAIRecommendation(
-//       req,
-//       res,
-//       userPrompt,
-//       filteredProducts
-//     );
-
-//     res.status(200).json({
-//       success: success,
-//       message: "AI filtered products.",
-//       products,
-//     });
-//   }
-// );
 export const fetchAIFilteredProducts = catchAsyncErrors(
   async (req, res, next) => {
     const { userPrompt } = req.body;
