@@ -24,27 +24,27 @@ const allowedOrigins = [
   "https://omnivault-frontend.vercel.app",
   process.env.FRONTEND_URL,
   process.env.DASHBOARD_URL,
-].filter(Boolean)
-.map((origin)=>origin.replace(/\/$/,""));
+].filter(Boolean);
 
 app.use(
   cors({
     origin: function (origin, callback) {
       if (!origin) return callback(null, true);
-      const normalizedOrigin=origin.replace(/\/$/,"");
-      if (allowedOrigins.includes(normalizedOrigin)) {
+
+      
+      if (allowedOrigins.includes(origin)) {
         return callback(null, true);
       } else {
         
-        return callback(null,false);
+        return callback(new Error("CORS policy violation: Access denied"));
       }
     },
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     credentials: true,
-    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With","Accept"],
+    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
   })
 );
-app.options("*",cors());
+
 app.post(
   "/api/v1/payment/webhook",
   express.raw({ type: "application/json" }),
