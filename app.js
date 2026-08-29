@@ -15,7 +15,6 @@ import Stripe from "stripe";
 import database from "./database/db.js";
 
 const app = express();
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || "");
 
 const allowedOrigins = [
   "http://localhost:5173",
@@ -25,31 +24,27 @@ const allowedOrigins = [
   "https://omnivault-frontend.vercel.app",
   process.env.FRONTEND_URL,
   process.env.DASHBOARD_URL,
-]
-  .filter(Boolean)
-  .map((url) => url.trim().replace(/\/+$/, ""));
+].filter(Boolean);
+
 app.use(
   cors({
     origin: function (origin, callback) {
       if (!origin) return callback(null, true);
 
-      const cleanOrigin = origin.trim().replace(/\/+$/, "");
-
-      if (allowedOrigins.indexOf(cleanOrigin) !== -1) {
-        callback(null, true);
+      
+      if (allowedOrigins.includes(origin)) {
+        return callback(null, true);
       } else {
-        callback(null, false);
+        
+        return callback(new Error("CORS policy violation: Access denied"));
       }
     },
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     credentials: true,
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
-    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Accept"],
+    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
   })
 );
 
-app.options("*", cors());
-
-// Stripe Webhook
 app.post(
   "/api/v1/payment/webhook",
   express.raw({ type: "application/json" }),
@@ -57,7 +52,7 @@ app.post(
     const sig = req.headers["stripe-signature"];
     let event;
     try {
-      event = stripe.webhooks.constructEvent(
+      event = Stripe.webhooks.constructEvent(
         req.body,
         sig,
         process.env.STRIPE_WEBHOOK_SECRET
@@ -74,26 +69,23 @@ app.post(
           `UPDATE payments SET payment_status = $1 WHERE payment_intent_id = $2 RETURNING *`,
           [updatedPaymentStatus, paymentIntent_client_secret]
         );
+        await database.query(
+          `UPDATE orders SET paid_at = NOW() WHERE id = $1 RETURNING *`,
+          [paymentTableUpdateResult.rows[0].order_id]
+        );
 
-        const orderId = paymentTableUpdateResult.rows[0]?.order_id;
+        const orderId = paymentTableUpdateResult.rows[0].order_id;
 
-        if (orderId) {
+        const { rows: orderedItems } = await database.query(
+          `SELECT product_id, quantity FROM order_items WHERE order_id = $1`,
+          [orderId]
+        );
+
+        for (const item of orderedItems) {
           await database.query(
-            `UPDATE orders SET paid_at = NOW() WHERE id::text = $1::text RETURNING *`,
-            [orderId]
+            `UPDATE products SET stock = stock - $1 WHERE id = $2`,
+            [item.quantity, item.product_id]
           );
-
-          const { rows: orderedItems } = await database.query(
-            `SELECT product_id, quantity FROM order_items WHERE order_id::text = $1::text`,
-            [orderId]
-          );
-
-          for (const item of orderedItems) {
-            await database.query(
-              `UPDATE products SET stock = stock - $1 WHERE id::text = $2::text`,
-              [item.quantity, item.product_id]
-            );
-          }
         }
       } catch (error) {
         return res
@@ -112,7 +104,7 @@ app.use(express.urlencoded({ extended: true }));
 app.use(
   fileUpload({
     useTempFiles: true,
-    tempFileDir: "/tmp/",
+    tempFileDir: "./uploads",
   })
 );
 
