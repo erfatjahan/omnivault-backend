@@ -61,8 +61,8 @@ export const fetchAllProducts = catchAsyncErrors(async (req, res, next) => {
   const offset = (page - 1) * limit;
 
   const conditions = [];
-  const values = [];
-  let index = 1;
+  const queryParams = [];
+  let paramIndex = 1;
 
   if (availability === "in-stock") {
     conditions.push(`p.stock > 5`);
@@ -76,82 +76,74 @@ export const fetchAllProducts = catchAsyncErrors(async (req, res, next) => {
     if (typeof price === "string" && price.includes("-")) {
       const [min, max] = price.split("-").map((v) => Number(v.trim()));
       if (!isNaN(min) && !isNaN(max)) {
-        conditions.push(`p.price >= $${index} AND p.price <= $${index + 1}`);
-        values.push(min, max);
-        index += 2;
+        conditions.push(`p.price >= $${paramIndex} AND p.price <= $${paramIndex + 1}`);
+        queryParams.push(min, max);
+        paramIndex += 2;
       }
     } else if (!isNaN(Number(price))) {
-      conditions.push(`p.price <= $${index}`);
-      values.push(Number(price));
-      index++;
+      conditions.push(`p.price <= $${paramIndex}`);
+      queryParams.push(Number(price));
+      paramIndex++;
     }
   }
 
   if (category && category.trim() !== "") {
-    conditions.push(`p.category ILIKE $${index}`);
-    values.push(`%${category.trim()}%`);
-    index++;
+    conditions.push(`p.category ILIKE $${paramIndex}`);
+    queryParams.push(`%${category.trim()}%`);
+    paramIndex++;
   }
 
   if (ratings && !isNaN(Number(ratings))) {
-    conditions.push(`p.ratings >= $${index}`);
-    values.push(Number(ratings));
-    index++;
+    conditions.push(`p.ratings >= $${paramIndex}`);
+    queryParams.push(Number(ratings));
+    paramIndex++;
   }
-
   if (search && search.trim() !== "") {
-    conditions.push(`(p.name ILIKE $${index} OR p.description ILIKE $${index})`);
-    values.push(`%${search.trim()}%`);
-    index++;
+    conditions.push(`(p.name ILIKE $${paramIndex} OR p.description ILIKE $${paramIndex})`);
+    queryParams.push(`%${search.trim()}%`);
+    paramIndex++;
   }
 
   const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
-
   const countQuery = `SELECT COUNT(DISTINCT p.id) FROM products p ${whereClause}`;
-  const totalProductsResult = await database.query(countQuery, values);
+  const totalProductsResult = await database.query(countQuery, queryParams);
   const totalProducts = parseInt(totalProductsResult.rows[0]?.count || 0);
-
-  const fetchValues = [...values, limit, offset];
-  const limitIndex = index;
-  const offsetIndex = index + 1;
-
-
+  const fetchParams = [...queryParams, limit, offset];
+  const limitPlaceholder = `$${paramIndex}`;
+  const offsetPlaceholder = `$${paramIndex + 1}`;
   const query = `
     SELECT p.*, 
-    COALESCE(COUNT(r.id), 0) AS review_count 
+    COALESCE(COUNT(r.id), 0)::integer AS review_count 
     FROM products p 
-    LEFT JOIN reviews r ON p.id = r.product_id
+    LEFT JOIN reviews r ON p.id::text = r.product_id::text
     ${whereClause}
     GROUP BY p.id
     ORDER BY p.created_at DESC
-    LIMIT $${limitIndex}
-    OFFSET $${offsetIndex}
+    LIMIT ${limitPlaceholder}
+    OFFSET ${offsetPlaceholder}
   `;
 
-  const result = await database.query(query, fetchValues);
-  const newProductsQuery = `
+  const result = await database.query(query, fetchParams);
+  const newProductsResult = await database.query(`
     SELECT p.*,
-    COALESCE(COUNT(r.id), 0) AS review_count
+    COALESCE(COUNT(r.id), 0)::integer AS review_count
     FROM products p
-    LEFT JOIN reviews r ON p.id = r.product_id
+    LEFT JOIN reviews r ON p.id::text = r.product_id::text
     WHERE p.created_at >= NOW() - INTERVAL '30 days'
     GROUP BY p.id
     ORDER BY p.created_at DESC
     LIMIT 8
-  `;
-  const newProductsResult = await database.query(newProductsQuery);
-
-  const topRatedQuery = `
+  `);
+  const topRatedResult = await database.query(`
     SELECT p.*,
-    COALESCE(COUNT(r.id), 0) AS review_count
+    COALESCE(COUNT(r.id), 0)::integer AS review_count
     FROM products p
-    LEFT JOIN reviews r ON p.id = r.product_id
+    LEFT JOIN reviews r ON p.id::text = r.product_id::text
     WHERE p.ratings >= 4.5
     GROUP BY p.id
     ORDER BY p.ratings DESC, p.created_at DESC
     LIMIT 8
-  `;
-  const topRatedResult = await database.query(topRatedQuery);
+  `);
 
   res.status(200).json({
     success: true,
@@ -173,8 +165,8 @@ export const updateProduct = catchAsyncErrors(async (req, res, next) => {
       new ErrorHandler("Please provide complete product details.", 400)
     );
   }
-  
-  const product = await database.query("SELECT * FROM products WHERE id = $1", [
+
+  const product = await database.query("SELECT * FROM products WHERE id::text = $1::text", [
     productId,
   ]);
   if (product.rows.length === 0) {
@@ -182,7 +174,7 @@ export const updateProduct = catchAsyncErrors(async (req, res, next) => {
   }
 
   const result = await database.query(
-    `UPDATE products SET name = $1, description = $2, price = $3, category = $4, stock = $5 WHERE id = $6 RETURNING *`,
+    `UPDATE products SET name = $1, description = $2, price = $3, category = $4, stock = $5 WHERE id::text = $6::text RETURNING *`,
     [name, description, Number(price), category, Number(stock), productId]
   );
 
@@ -196,7 +188,7 @@ export const updateProduct = catchAsyncErrors(async (req, res, next) => {
 export const deleteProduct = catchAsyncErrors(async (req, res, next) => {
   const { productId } = req.params;
 
-  const product = await database.query("SELECT * FROM products WHERE id = $1", [
+  const product = await database.query("SELECT * FROM products WHERE id::text = $1::text", [
     productId,
   ]);
   if (product.rows.length === 0) {
@@ -209,10 +201,10 @@ export const deleteProduct = catchAsyncErrors(async (req, res, next) => {
   try {
     await client.query("BEGIN");
 
-    await client.query("DELETE FROM reviews WHERE product_id = $1", [productId]);
-    
+    await client.query("DELETE FROM reviews WHERE product_id::text = $1::text", [productId]);
+
     const deleteResult = await client.query(
-      "DELETE FROM products WHERE id = $1 RETURNING *",
+      "DELETE FROM products WHERE id::text = $1::text RETURNING *",
       [productId]
     );
 
@@ -228,6 +220,7 @@ export const deleteProduct = catchAsyncErrors(async (req, res, next) => {
   } finally {
     client.release();
   }
+
   if (images && Array.isArray(images) && images.length > 0) {
     for (const image of images) {
       if (image?.public_id) {
@@ -263,9 +256,9 @@ export const fetchSingleProduct = catchAsyncErrors(async (req, res, next) => {
         ) FILTER (WHERE r.id IS NOT NULL), '[]'
       ) AS reviews
       FROM products p
-      LEFT JOIN reviews r ON p.id = r.product_id
-      LEFT JOIN users u ON r.user_id = u.id
-      WHERE p.id = $1
+      LEFT JOIN reviews r ON p.id::text = r.product_id::text
+      LEFT JOIN users u ON r.user_id::text = u.id::text
+      WHERE p.id::text = $1::text
       GROUP BY p.id
     `,
     [productId]
@@ -289,18 +282,18 @@ export const postProductReview = catchAsyncErrors(async (req, res, next) => {
     return next(new ErrorHandler("Please provide rating and comment.", 400));
   }
 
-  const purchasheCheckQuery = `
+  const purchaseCheckQuery = `
     SELECT oi.product_id
     FROM order_items oi
-    JOIN orders o ON o.id = oi.order_id
-    JOIN payments p ON p.order_id = o.id
-    WHERE o.buyer_id = $1
-    AND oi.product_id = $2
+    JOIN orders o ON o.id::text = oi.order_id::text
+    JOIN payments p ON p.order_id::text = o.id::text
+    WHERE o.buyer_id::text = $1::text
+    AND oi.product_id::text = $2::text
     AND p.payment_status = 'Paid'
     LIMIT 1 
   `;
 
-  const { rows } = await database.query(purchasheCheckQuery, [
+  const { rows } = await database.query(purchaseCheckQuery, [
     req.user.id,
     productId,
   ]);
@@ -312,7 +305,7 @@ export const postProductReview = catchAsyncErrors(async (req, res, next) => {
     });
   }
 
-  const product = await database.query("SELECT * FROM products WHERE id = $1", [
+  const product = await database.query("SELECT * FROM products WHERE id::text = $1::text", [
     productId,
   ]);
   if (product.rows.length === 0) {
@@ -320,14 +313,14 @@ export const postProductReview = catchAsyncErrors(async (req, res, next) => {
   }
 
   const isAlreadyReviewed = await database.query(
-    `SELECT * FROM reviews WHERE product_id = $1 AND user_id = $2`,
+    `SELECT * FROM reviews WHERE product_id::text = $1::text AND user_id::text = $2::text`,
     [productId, req.user.id]
   );
 
   let review;
   if (isAlreadyReviewed.rows.length > 0) {
     review = await database.query(
-      "UPDATE reviews SET rating = $1, comment = $2 WHERE product_id = $3 AND user_id = $4 RETURNING *",
+      "UPDATE reviews SET rating = $1, comment = $2 WHERE product_id::text = $3::text AND user_id::text = $4::text RETURNING *",
       [rating, comment, productId, req.user.id]
     );
   } else {
@@ -338,14 +331,14 @@ export const postProductReview = catchAsyncErrors(async (req, res, next) => {
   }
 
   const allReviews = await database.query(
-    `SELECT AVG(rating) AS avg_rating FROM reviews WHERE product_id = $1`,
+    `SELECT COALESCE(AVG(rating), 0) AS avg_rating FROM reviews WHERE product_id::text = $1::text`,
     [productId]
   );
 
   const newAvgRating = parseFloat(allReviews.rows[0]?.avg_rating || 0).toFixed(1);
 
   const updatedProduct = await database.query(
-    `UPDATE products SET ratings = $1 WHERE id = $2 RETURNING *`,
+    `UPDATE products SET ratings = $1 WHERE id::text = $2::text RETURNING *`,
     [newAvgRating, productId]
   );
 
@@ -360,7 +353,7 @@ export const postProductReview = catchAsyncErrors(async (req, res, next) => {
 export const deleteReview = catchAsyncErrors(async (req, res, next) => {
   const { productId } = req.params;
   const review = await database.query(
-    "DELETE FROM reviews WHERE product_id = $1 AND user_id = $2 RETURNING *",
+    "DELETE FROM reviews WHERE product_id::text = $1::text AND user_id::text = $2::text RETURNING *",
     [productId, req.user.id]
   );
 
@@ -369,14 +362,14 @@ export const deleteReview = catchAsyncErrors(async (req, res, next) => {
   }
 
   const allReviews = await database.query(
-    `SELECT AVG(rating) AS avg_rating FROM reviews WHERE product_id = $1`,
+    `SELECT COALESCE(AVG(rating), 0) AS avg_rating FROM reviews WHERE product_id::text = $1::text`,
     [productId]
   );
 
   const newAvgRating = parseFloat(allReviews.rows[0]?.avg_rating || 0).toFixed(1);
 
   const updatedProduct = await database.query(
-    `UPDATE products SET ratings = $1 WHERE id = $2 RETURNING *`,
+    `UPDATE products SET ratings = $1 WHERE id::text = $2::text RETURNING *`,
     [newAvgRating, productId]
   );
 
