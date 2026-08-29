@@ -9,6 +9,10 @@ import { sendEmail } from "../utils/sendemail.js";
 import crypto from "crypto";
 import { v2 as cloudinary } from "cloudinary";
 
+const DEFAULT_AVATAR_PUBLIC_ID = "wsospe2rht8njooknoqr";
+const DEFAULT_AVATAR_URL =
+  "https://res.cloudinary.com/dxxyl4xnv/image/upload/v1788003882/wsospe2rht8njooknoqr.jpg";
+
 export const register = catchAsyncErrors(async (req, res, next) => {
   const { name, email, password } = req.body;
 
@@ -39,8 +43,8 @@ export const register = catchAsyncErrors(async (req, res, next) => {
   const hashedPassword = await bcrypt.hash(password, 10);
 
   const defaultAvatar = JSON.stringify({
-    public_id: "",
-    url: "https://res.cloudinary.com/dxxyl4xnv/image/upload/v1/Ecommerce_Avatars/default_avatar.png",
+    public_id: DEFAULT_AVATAR_PUBLIC_ID,
+    url: DEFAULT_AVATAR_URL,
   });
 
   const user = await database.query(
@@ -259,8 +263,22 @@ export const updateProfile = catchAsyncErrors(async (req, res, next) => {
   let avatarData = null;
   if (req.files && req.files.avatar) {
     const { avatar } = req.files;
-    if (req.user?.avatar?.public_id) {
-      await cloudinary.uploader.destroy(req.user.avatar.public_id);
+
+    let currentAvatar = req.user?.avatar;
+    if (typeof currentAvatar === "string") {
+      try {
+        currentAvatar = JSON.parse(currentAvatar);
+      } catch (e) {
+        currentAvatar = null;
+      }
+    }
+
+    if (
+      currentAvatar?.public_id &&
+      currentAvatar.public_id !== DEFAULT_AVATAR_PUBLIC_ID &&
+      currentAvatar.public_id !== ""
+    ) {
+      await cloudinary.uploader.destroy(currentAvatar.public_id);
     }
 
     const newProfileImage = await cloudinary.uploader.upload(
@@ -353,6 +371,25 @@ export const deleteUser = catchAsyncErrors(async (req, res, next) => {
     }
 
     await client.query("COMMIT");
+
+    const deletedUser = result.rows[0];
+    let userAvatar = deletedUser?.avatar;
+    if (typeof userAvatar === "string") {
+      try {
+        userAvatar = JSON.parse(userAvatar);
+      } catch (e) {
+        userAvatar = null;
+      }
+    }
+
+    if (
+      userAvatar?.public_id &&
+      userAvatar.public_id !== DEFAULT_AVATAR_PUBLIC_ID &&
+      userAvatar.public_id !== ""
+    ) {
+      await cloudinary.uploader.destroy(userAvatar.public_id);
+    }
+
     res.status(200).json({
       success: true,
       message: "User and all associated records deleted successfully.",
