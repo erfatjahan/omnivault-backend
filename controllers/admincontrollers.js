@@ -3,7 +3,7 @@ import { catchAsyncErrors } from "../middlewares/catchAsyncError.js";
 import database from "../database/db.js";
 import { v2 as cloudinary } from "cloudinary";
 
-export const getAll//Users = catchAsyncErrors(async (req, res, next) => {
+export const getAllUsers = catchAsyncErrors(async (req, res, next) => {
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 10;
   const offset = (page - 1) * limit;
@@ -179,6 +179,7 @@ export const dashboardStats = catchAsyncErrors(async (req, res, next) => {
     [currentMonthStart]
   );
   const newUsersThisMonth = parseInt(newUsersThisMonthQuery.rows[0].count, 10) || 0;
+
   res.status(200).json({
     success: true,
     message: "Dashboard Stats Fetched Successfully",
