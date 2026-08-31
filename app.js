@@ -2,6 +2,7 @@ import { config } from "dotenv";
 config({ path: "./config/config.env" });
 import express from "express";
 import cors from "cors";
+
 import cookieParser from "cookie-parser";
 import fileUpload from "express-fileupload";
 import { createTables } from "./utils/createTables.js";
@@ -13,7 +14,7 @@ import orderRouter from "./router/orderroutes.js";
 import paymentRoutes from "./router/paymentRoutes.js";
 import Stripe from "stripe";
 import database from "./database/db.js";
-
+config();
 const app = express();
 
 const allowedOrigins = [
