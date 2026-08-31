@@ -1,83 +1,55 @@
-// export async function getAIRecommendation(req, res, userPrompt, products) {
-//   const API_KEY = process.env.GEMINI_API_KEY;
-//   const URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${API_KEY}`;
-
-//   try {
-//     const geminiPrompt = `
-//         Here is a list of avaiable products:
-//         ${JSON.stringify(products, null, 2)}
-
-//         Based on the following user request, filter and suggest the best matching products:
-//         "${userPrompt}"
-
-//         Only return the matching products in JSON format.
-//     `;
-
-//     const response = await fetch(URL, {
-//       method: "POST",
-//       headers: { "Content-Type": "application/json" },
-//       body: JSON.stringify({
-//         contents: [{ parts: [{ text: geminiPrompt }] }],
-//       }),
-//     });
-
-//     const data = await response.json();
-//     const aiResponseText =
-//       data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || "";
-//     const cleanedText = aiResponseText.replace(/```json|```/g, ``).trim();
-
-//     if (!cleanedText) {
-//       return res
-//         .status(500)
-//         .json({ success: false, message: "AI response is empty or invalid." });
-//     }
-
-//     let parsedProducts;
-//     try {
-//       parsedProducts = JSON.parse(cleanedText);
-//     } catch (error) {
-//       return res
-//         .status(500)
-//         .json({ success: false, message: "Failed to parse AI response" });
-//     }
-//     return { success: true, products: parsedProducts };
-//   } catch (error) {
-//     res.status(500).json({ success: false, message: "Internal server error." });
-//   }
-// }
-// 
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
 export const getAIRecommendation = async (req, res, userPrompt, products) => {
-  const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    console.error("GEMINI_API_KEY is not set in environment variables.");
+    return {
+      success: true,
+      products: getFallbackMatches(userPrompt, products),
+    };
+  }
 
+  const genAI = new GoogleGenerativeAI(apiKey);
   const simplifiedProducts = products.map((p) => ({
-    id: p.id,
+    id: String(p.id),
     name: p.name,
-    description: p.description,
     category: p.category,
+    description: p.description ? p.description.slice(0, 160) : "",
     price: p.price,
   }));
 
   const promptText = `
-    You are an intelligent e-commerce shopping assistant.
-    User Query: "${userPrompt}"
-    (The query can be in English, Bengali, or Banglish like "amk ekta phone daw").
+You are an expert e-commerce product search assistant for an online store.
 
-    Available Products:
-    ${JSON.stringify(simplifiedProducts)}
+User Query: "${userPrompt}"
+Note: The query can be in English, Bengali, or Banglish (e.g., "amk ekta phone daw", "valoi shoe", "camera laptop").
 
-    Identify which products match the user's intent.
-    Respond ONLY with a valid JSON array of matching product IDs.
-    Example: [1, 4, 8]
-    If no product matches, respond with: []
-  `;
+Store Inventory:
+${JSON.stringify(simplifiedProducts)}
 
-  const modelsToTry = ["gemini-3.6-flash", "gemini-1.5-flash", "gemini-1.5-pro"];
+Task:
+1. Understand user intent, synonyms, and categories (e.g., "phone" matches "Smartphone", "shoe" matches "Sneakers", "t-shirt" matches "Cloth/Clothing").
+2. Match products based on name, category, and description even with partial or misspelled keywords.
+3. Return ONLY a valid JSON array of matching product IDs.
+Example output format:
+["1", "4", "8"]
+
+If absolutely no product matches the query, return:
+[]
+`;
+  const modelsToTry = ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-1.5-pro"];
 
   for (const modelName of modelsToTry) {
     try {
-      const model = genAI.getGenerativeModel({ model: modelName });
+      const model = genAI.getGenerativeModel({
+        model: modelName,
+        generationConfig: {
+          responseMimeType: "application/json",
+          temperature: 0.2,
+        },
+      });
+
       const result = await model.generateContent(promptText);
       const text = result.response.text().trim();
 
@@ -89,30 +61,39 @@ export const getAIRecommendation = async (req, res, userPrompt, products) => {
           matchedIds.some((id) => String(id) === String(p.id))
         );
 
-        return {
-          success: true,
-          products: matchedProducts,
-        };
+        if (matchedProducts.length > 0) {
+          return {
+            success: true,
+            products: matchedProducts,
+          };
+        }
       }
     } catch (err) {
-      console.warn(`Model ${modelName} failed or busy. Trying next...`);
-      
+      console.warn(`Model ${modelName} encountered an error:`, err.message);
     }
   }
 
-  const words = userPrompt
-    .toLowerCase()
-    .replace(/[^\w\s]/g, "")
-    .split(/\s+/)
-    .filter((w) => w.length > 2);
-
-  const fallbackMatches = products.filter((p) => {
-    const text = `${p.name} ${p.description} ${p.category}`.toLowerCase();
-    return words.some((w) => text.includes(w));
-  });
+  const fallbackProducts = getFallbackMatches(userPrompt, products);
 
   return {
     success: true,
-    products: fallbackMatches.length > 0 ? fallbackMatches : products.slice(0, 6),
+    products: fallbackProducts,
   };
 };
+
+function getFallbackMatches(userPrompt, products) {
+  const query = userPrompt.toLowerCase().trim();
+  const words = query
+    .replace(/[^\w\s\u0980-\u09FF]/g, "")
+    .split(/\s+/)
+    .filter((w) => w.length > 1);
+
+  if (words.length === 0) return [];
+
+  const matched = products.filter((p) => {
+    const text = `${p.name || ""} ${p.category || ""} ${p.description || ""}`.toLowerCase();
+    return words.some((w) => text.includes(w));
+  });
+
+  return matched;
+}
