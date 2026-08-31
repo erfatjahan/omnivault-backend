@@ -15,7 +15,6 @@ import Stripe from "stripe";
 import database from "./database/db.js";
 
 const app = express();
-app.set("trust proxy", 1);
 
 const allowedOrigins = [
   "http://localhost:5173",
@@ -30,25 +29,21 @@ const allowedOrigins = [
 app.use(
   cors({
     origin: function (origin, callback) {
-      if (!origin || allowedOrigins.includes(origin)) {
+      if (!origin) return callback(null, true);
+      
+      if (allowedOrigins.includes(origin)) {
         return callback(null, true);
+      } else {
+        
+        return callback(new Error("CORS policy violation: Access denied"));
       }
-      return callback(null, false);
     },
-    methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     credentials: true,
-    allowedHeaders: [
-      "Content-Type",
-      "Authorization",
-      "X-Requested-With",
-      "Accept",
-      "Origin",
-    ],
-    optionsSuccessStatus: 200,
+    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
   })
 );
 
-// Stripe Webhook Route
 app.post(
   "/api/v1/payment/webhook",
   express.raw({ type: "application/json" }),
@@ -73,26 +68,23 @@ app.post(
           `UPDATE payments SET payment_status = $1 WHERE payment_intent_id = $2 RETURNING *`,
           [updatedPaymentStatus, paymentIntent_client_secret]
         );
+        await database.query(
+          `UPDATE orders SET paid_at = NOW() WHERE id = $1 RETURNING *`,
+          [paymentTableUpdateResult.rows[0].order_id]
+        );
 
-        if (paymentTableUpdateResult.rows.length > 0) {
-          const orderId = paymentTableUpdateResult.rows[0].order_id;
+        const orderId = paymentTableUpdateResult.rows[0].order_id;
 
+        const { rows: orderedItems } = await database.query(
+          `SELECT product_id, quantity FROM order_items WHERE order_id = $1`,
+          [orderId]
+        );
+
+        for (const item of orderedItems) {
           await database.query(
-            `UPDATE orders SET paid_at = NOW() WHERE id = $1 RETURNING *`,
-            [orderId]
+            `UPDATE products SET stock = stock - $1 WHERE id = $2`,
+            [item.quantity, item.product_id]
           );
-
-          const { rows: orderedItems } = await database.query(
-            `SELECT product_id, quantity FROM order_items WHERE order_id = $1`,
-            [orderId]
-          );
-
-          for (const item of orderedItems) {
-            await database.query(
-              `UPDATE products SET stock = stock - $1 WHERE id = $2`,
-              [item.quantity, item.product_id]
-            );
-          }
         }
       } catch (error) {
         return res
