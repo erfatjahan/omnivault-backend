@@ -2,96 +2,66 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 
 export const getAIRecommendation = async (req, res, userPrompt, products) => {
   const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    console.error("GEMINI_API_KEY is not set in environment variables.");
-    return {
-      success: true,
-      products: getFallbackMatches(userPrompt, products),
-    };
+
+  if (!apiKey || !products || products.length === 0) {
+    return { success: true, products: products ? products.slice(0, 8) : [] };
   }
 
-  const genAI = new GoogleGenerativeAI(apiKey);
+  try {
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const productCatalog = products.map((p) => ({
+      id: String(p.id ?? p.product_id ?? p._id),
+      title: p.name || p.title || "",
+      category: p.category || "",
+      description: p.description ? String(p.description).slice(0, 160) : "",
+      price: p.price,
+    }));
+    const prompt = `
+You are the core AI intelligence for an e-commerce search engine.
 
-  const simplifiedProducts = products.map((p) => ({
-    id: String(p.id),
-    name: p.name,
-    category: p.category,
-    description: p.description ? p.description.slice(0, 160) : "",
-    price: p.price,
-  }));
+User's Raw Query: "${userPrompt}"
 
-  const promptText = `
-You are an expert e-commerce product search assistant for an online store.
+Store Catalog:
+${JSON.stringify(productCatalog)}
 
-User Query: "${userPrompt}"
-Note: The query can be in natural language, English, Bengali, or Banglish (e.g., "vlo mobile", "amk ekta phone daw", "dam kom headphone", "camera laptop").
+Your Task:
+1. Understand the user's intent deeply regardless of the language, dialect, spelling errors, phonetic variations, or slang used (e.g., Banglish, Bengali, Hindi, colloquial English, transliterated terms).
+2. Rank and select the catalog items that best satisfy what the user is actually trying to find.
+3. Return ONLY a valid JSON array containing the matching product string IDs.
+Example format:
+["1", "4"]
 
-Store Inventory:
-${JSON.stringify(simplifiedProducts)}
-
-Task:
-1. Understand user intent, meaning, and synonyms (e.g., "mobile" matches "phone" or "smartphone", "vlo/bhalo" means good/high-rated, "dress/kapor" matches "clothing/shirt").
-2. Match products based on name, category, and description even with partial or misspelled keywords.
-3. Return ONLY a valid JSON array of matching product IDs as strings.
-Example output format:
-["1", "4", "8"]
-
-If absolutely no product matches the query, return:
+If nothing in the catalog is relevant to the user's request, return:
 []
 `;
-  const modelsToTry = ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-1.5-pro"];
 
-  for (const modelName of modelsToTry) {
-    try {
-      const model = genAI.getGenerativeModel({
-        model: modelName,
-        generationConfig: {
-          responseMimeType: "application/json",
-          temperature: 0.2,
-        },
+    const model = genAI.getGenerativeModel({
+      model: "gemini-1.5-flash",
+      generationConfig: {
+        responseMimeType: "application/json",
+        temperature: 0.1,
+      },
+    });
+
+    const result = await model.generateContent(prompt);
+    const text = result.response.text().trim();
+    const matchedIds = JSON.parse(text);
+
+    if (Array.isArray(matchedIds) && matchedIds.length > 0) {
+      const matchedProducts = products.filter((p) => {
+        const currentId = String(p.id ?? p.product_id ?? p._id);
+        return matchedIds.map(String).includes(currentId);
       });
 
-      const result = await model.generateContent(promptText);
-      const text = result.response.text().trim();
-
-      const cleanJson = text.replace(/```json|```/g, "").trim();
-      const matchedIds = JSON.parse(cleanJson);
-
-      if (Array.isArray(matchedIds)) {
-        const matchedProducts = products.filter((p) =>
-          matchedIds.some((id) => String(id) === String(p.id))
-        );
-
-        return {
-          success: true,
-          products: matchedProducts,
-        };
-      }
-    } catch (err) {
-      console.warn(`Model ${modelName} encountered an error:`, err.message);
+      return {
+        success: true,
+        products: matchedProducts,
+      };
     }
+
+    return { success: true, products: [] };
+  } catch (error) {
+    console.error("Gemini Universal Search Error:", error.message);
+    return { success: true, products: products.slice(0, 8) };
   }
-  const fallbackProducts = getFallbackMatches(userPrompt, products);
-
-  return {
-    success: true,
-    products: fallbackProducts,
-  };
 };
-
-function getFallbackMatches(userPrompt, products) {
-  const query = userPrompt.toLowerCase().trim();
-  const words = query
-    .replace(/[^\w\s\u0980-\u09FF]/g, "")
-    .split(/\s+/)
-    .filter((w) => w.length > 1);
-
-  if (words.length === 0) return [];
-
-  const matched = products.filter((p) => {
-    const text = `${p.name || ""} ${p.category || ""} ${p.description || ""}`.toLowerCase();
-    return words.some((w) => text.includes(w));
-  });
-
-  return matched;
-}
