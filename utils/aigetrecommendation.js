@@ -4,49 +4,49 @@ export const getAIRecommendation = async (req, res, userPrompt, products) => {
   const apiKey = process.env.GEMINI_API_KEY;
 
   if (!apiKey) {
-    console.error("GEMINI_API_KEY not found!");
+    console.error("GEMINI_API_KEY is missing in backend environment!");
     return { success: true, products: [] };
   }
 
-  if (!products || products.length === 0) {
+  if (!products || !Array.isArray(products) || products.length === 0) {
     return { success: true, products: [] };
   }
+  const catalog = products.map((p) => {
+    const rawId = p.id ?? p.product_id ?? p._id ?? p.id_product;
+    const title = p.name || p.title || p.product_name || "";
+    const category = p.category?.name || p.category || p.category_name || "";
+    const description = p.description ? String(p.description).slice(0, 160) : "";
 
-  try {
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const productCatalog = products.map((p) => {
-      const rawId = p.id ?? p.product_id ?? p._id ?? p.id_product;
-      const title = p.name || p.title || p.product_name || "";
-      const cat = p.category || p.category_name || "";
-      const desc = p.description ? String(p.description).slice(0, 150) : "";
-      
-      return {
-        id: String(rawId),
-        title,
-        category: cat,
-        description: desc,
-        price: p.price,
-      };
-    });
+    return {
+      id: String(rawId),
+      title,
+      category,
+      description,
+      price: Number(p.price || 0),
+      ratings: Number(p.ratings || p.rating || 0),
+    };
+  });
+  const prompt = `
+You are the intelligent core search engine for this e-commerce platform.
 
-    const prompt = `
-You are an intelligent e-commerce product search engine.
+User Query: "${userPrompt}"
 
-User Search Query: "${userPrompt}"
-
-Store Products:
-${JSON.stringify(productCatalog)}
+Store Catalog:
+${JSON.stringify(catalog, null, 2)}
 
 Instructions:
-1. Understand the user's intent in any language or transliteration (Bengali, Banglish, English, etc.).
-2. Find only the products from the Store Products list that genuinely match what the user is searching for (e.g., if user searches "dress" or "kapor", ONLY return dress/apparel items, DO NOT return mobiles/electronics).
-3. Return ONLY a valid JSON array of matching product ID strings.
-Example: ["1", "5"]
+- Understand the user's intent deeply. The user can type in any language (English, Bengali, Banglish, slang, phonetic spelling, transliteration like "vlo mobile", "ekta kapor chai", "sosta headphone", "gaming laptop", "shoes").
+- Analyze the semantic meaning, categories, descriptions, price, and ratings from the Store Catalog.
+- Select ONLY the product IDs from the catalog that genuinely fulfill the user's request.
+- Return strictly a valid JSON array of matching product string IDs (e.g. ["1", "4"]).
+- If no products in the catalog match the user's intent, return strictly an empty array: []
 
-If no relevant products are found in the store, return:
-[]
+Return ONLY the raw JSON array. Do not include explanation or markdown.
 `;
 
+  const genAI = new GoogleGenerativeAI(apiKey);
+
+  try {
     const model = genAI.getGenerativeModel({
       model: "gemini-1.5-flash",
       generationConfig: {
@@ -56,15 +56,15 @@ If no relevant products are found in the store, return:
     });
 
     const result = await model.generateContent(prompt);
-    const rawText = result.response.text().trim();
-    const cleanJson = rawText.replace(/```json|```/g, "").trim();
+    const responseText = result.response.text().trim();
+    const cleanJson = responseText
+      .replace(/```json/gi, "")
+      .replace(/```/g, "")
+      .trim();
+
     const matchedIds = JSON.parse(cleanJson);
 
     if (Array.isArray(matchedIds)) {
-      if (matchedIds.length === 0) {
-        return { success: true, products: [] };
-      }
-
       const matchedProducts = products.filter((p) => {
         const currentId = String(p.id ?? p.product_id ?? p._id ?? p.id_product);
         return matchedIds.map(String).includes(currentId);
@@ -75,10 +75,11 @@ If no relevant products are found in the store, return:
         products: matchedProducts,
       };
     }
-
-    return { success: true, products: [] };
   } catch (error) {
-    console.error("Gemini Search Error:", error.message);
-    return { success: true, products: [] };
+    console.error("Gemini AI Search Runtime Error:", error.message);
   }
+  return {
+    success: true,
+    products: [],
+  };
 };
