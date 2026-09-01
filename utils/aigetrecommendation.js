@@ -11,6 +11,7 @@ export const getAIRecommendation = async (req, res, userPrompt, products) => {
   }
 
   const genAI = new GoogleGenerativeAI(apiKey);
+
   const simplifiedProducts = products.map((p) => ({
     id: String(p.id),
     name: p.name,
@@ -23,22 +24,22 @@ export const getAIRecommendation = async (req, res, userPrompt, products) => {
 You are an expert e-commerce product search assistant for an online store.
 
 User Query: "${userPrompt}"
-Note: The query can be in English, Bengali, or Banglish (e.g., "amk ekta phone daw", "valoi shoe", "camera laptop").
+Note: The query can be in natural language, English, Bengali, or Banglish (e.g., "vlo mobile", "amk ekta phone daw", "dam kom headphone", "camera laptop").
 
 Store Inventory:
 ${JSON.stringify(simplifiedProducts)}
 
 Task:
-1. Understand user intent, synonyms, and categories (e.g., "phone" matches "Smartphone", "shoe" matches "Sneakers", "t-shirt" matches "Cloth/Clothing").
+1. Understand user intent, meaning, and synonyms (e.g., "mobile" matches "phone" or "smartphone", "vlo/bhalo" means good/high-rated, "dress/kapor" matches "clothing/shirt").
 2. Match products based on name, category, and description even with partial or misspelled keywords.
-3. Return ONLY a valid JSON array of matching product IDs.
+3. Return ONLY a valid JSON array of matching product IDs as strings.
 Example output format:
 ["1", "4", "8"]
 
 If absolutely no product matches the query, return:
 []
 `;
-  const modelsToTry = ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-1.5-pro"];
+  const modelsToTry = ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-1.5-pro"];
 
   for (const modelName of modelsToTry) {
     try {
@@ -61,18 +62,15 @@ If absolutely no product matches the query, return:
           matchedIds.some((id) => String(id) === String(p.id))
         );
 
-        if (matchedProducts.length > 0) {
-          return {
-            success: true,
-            products: matchedProducts,
-          };
-        }
+        return {
+          success: true,
+          products: matchedProducts,
+        };
       }
     } catch (err) {
       console.warn(`Model ${modelName} encountered an error:`, err.message);
     }
   }
-
   const fallbackProducts = getFallbackMatches(userPrompt, products);
 
   return {
