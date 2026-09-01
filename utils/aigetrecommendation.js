@@ -30,7 +30,7 @@ If nothing matches, return: []
 `;
   const candidateModels = [
     "gemini-3.6-flash",
-    "gemini-3.6-flash-latest"
+    "gemini-3.6-flash-latest",
   ];
 
   const genAI = new GoogleGenerativeAI(apiKey);
