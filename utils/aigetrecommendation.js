@@ -29,13 +29,12 @@ Example: ["1", "2"]
 If nothing matches, return: []
 `;
 
-  const candidateModels = [
+ const candidateModels = [
     "gemini-2.0-flash",
     "gemini-1.5-flash",
-    "gemini-1.5-flash-8b",
-    "gemini-1.5-pro",
+    "gemini-1.5-flash-latest",
+    "gemini-1.5-pro-latest"
   ];
-
   const genAI = new GoogleGenerativeAI(apiKey);
 
   for (const modelName of candidateModels) {
