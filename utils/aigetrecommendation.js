@@ -3,35 +3,47 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 export const getAIRecommendation = async (req, res, userPrompt, products) => {
   const apiKey = process.env.GEMINI_API_KEY;
 
-  if (!apiKey || !products || products.length === 0) {
-    return { success: true, products: products ? products.slice(0, 8) : [] };
+  if (!apiKey) {
+    console.error("GEMINI_API_KEY not found!");
+    return { success: true, products: [] };
+  }
+
+  if (!products || products.length === 0) {
+    return { success: true, products: [] };
   }
 
   try {
     const genAI = new GoogleGenerativeAI(apiKey);
-    const productCatalog = products.map((p) => ({
-      id: String(p.id ?? p.product_id ?? p._id),
-      title: p.name || p.title || "",
-      category: p.category || "",
-      description: p.description ? String(p.description).slice(0, 160) : "",
-      price: p.price,
-    }));
+    const productCatalog = products.map((p) => {
+      const rawId = p.id ?? p.product_id ?? p._id ?? p.id_product;
+      const title = p.name || p.title || p.product_name || "";
+      const cat = p.category || p.category_name || "";
+      const desc = p.description ? String(p.description).slice(0, 150) : "";
+      
+      return {
+        id: String(rawId),
+        title,
+        category: cat,
+        description: desc,
+        price: p.price,
+      };
+    });
+
     const prompt = `
-You are the core AI intelligence for an e-commerce search engine.
+You are an intelligent e-commerce product search engine.
 
-User's Raw Query: "${userPrompt}"
+User Search Query: "${userPrompt}"
 
-Store Catalog:
+Store Products:
 ${JSON.stringify(productCatalog)}
 
-Your Task:
-1. Understand the user's intent deeply regardless of the language, dialect, spelling errors, phonetic variations, or slang used (e.g., Banglish, Bengali, Hindi, colloquial English, transliterated terms).
-2. Rank and select the catalog items that best satisfy what the user is actually trying to find.
-3. Return ONLY a valid JSON array containing the matching product string IDs.
-Example format:
-["1", "4"]
+Instructions:
+1. Understand the user's intent in any language or transliteration (Bengali, Banglish, English, etc.).
+2. Find only the products from the Store Products list that genuinely match what the user is searching for (e.g., if user searches "dress" or "kapor", ONLY return dress/apparel items, DO NOT return mobiles/electronics).
+3. Return ONLY a valid JSON array of matching product ID strings.
+Example: ["1", "5"]
 
-If nothing in the catalog is relevant to the user's request, return:
+If no relevant products are found in the store, return:
 []
 `;
 
@@ -44,12 +56,17 @@ If nothing in the catalog is relevant to the user's request, return:
     });
 
     const result = await model.generateContent(prompt);
-    const text = result.response.text().trim();
-    const matchedIds = JSON.parse(text);
+    const rawText = result.response.text().trim();
+    const cleanJson = rawText.replace(/```json|```/g, "").trim();
+    const matchedIds = JSON.parse(cleanJson);
 
-    if (Array.isArray(matchedIds) && matchedIds.length > 0) {
+    if (Array.isArray(matchedIds)) {
+      if (matchedIds.length === 0) {
+        return { success: true, products: [] };
+      }
+
       const matchedProducts = products.filter((p) => {
-        const currentId = String(p.id ?? p.product_id ?? p._id);
+        const currentId = String(p.id ?? p.product_id ?? p._id ?? p.id_product);
         return matchedIds.map(String).includes(currentId);
       });
 
@@ -61,7 +78,7 @@ If nothing in the catalog is relevant to the user's request, return:
 
     return { success: true, products: [] };
   } catch (error) {
-    console.error("Gemini Universal Search Error:", error.message);
-    return { success: true, products: products.slice(0, 8) };
+    console.error("Gemini Search Error:", error.message);
+    return { success: true, products: [] };
   }
 };
