@@ -28,24 +28,28 @@ Task:
 Example: ["1", "2"]
 If nothing matches, return: []
 `;
+
   const candidateModels = [
-    "gemini-2.5-flash",
     "gemini-2.0-flash",
-    "gemini-1.5-flash-8b",
     "gemini-1.5-flash",
+    "gemini-1.5-flash-8b",
+    "gemini-1.5-pro",
   ];
 
   const genAI = new GoogleGenerativeAI(apiKey);
 
   for (const modelName of candidateModels) {
     try {
-      const model = genAI.getGenerativeModel({
-        model: modelName,
-        generationConfig: {
-          responseMimeType: "application/json",
-          temperature: 0.1,
+      const model = genAI.getGenerativeModel(
+        {
+          model: modelName,
+          generationConfig: {
+            responseMimeType: "application/json",
+            temperature: 0.1,
+          },
         },
-      });
+        { apiVersion: "v1beta" }
+      );
 
       const result = await model.generateContent(prompt);
       const responseText = result.response.text().trim();
@@ -53,9 +57,11 @@ If nothing matches, return: []
       const matchedIds = JSON.parse(cleanJson);
 
       if (Array.isArray(matchedIds)) {
+        const matchedIdSet = new Set(matchedIds.map(String));
+
         const matchedProducts = products.filter((p, index) => {
           const currentId = String(p.id ?? p.product_id ?? p._id ?? p.id_product ?? index);
-          return matchedIds.map(String).includes(currentId);
+          return matchedIdSet.has(currentId);
         });
 
         return {
