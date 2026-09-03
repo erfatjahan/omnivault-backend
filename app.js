@@ -1,8 +1,9 @@
 import { config } from "dotenv";
 config({ path: "./config/config.env" });
+config();
+
 import express from "express";
 import cors from "cors";
-
 import cookieParser from "cookie-parser";
 import fileUpload from "express-fileupload";
 import { createTables } from "./utils/createTables.js";
@@ -14,7 +15,7 @@ import orderRouter from "./router/orderroutes.js";
 import paymentRoutes from "./router/paymentRoutes.js";
 import Stripe from "stripe";
 import database from "./database/db.js";
-config();
+
 const app = express();
 
 const allowedOrigins = [
@@ -34,20 +35,28 @@ app.use(
   cors({
     origin: function (origin, callback) {
       if (!origin) return callback(null, true);
-      if (
+
+      const isAllowed =
         allowedOrigins.includes(origin) ||
-        origin.endsWith(".sslcommerz.com")
-      ) {
+        origin.endsWith(".sslcommerz.com") ||
+        origin.endsWith(".vercel.app");
+
+      if (isAllowed) {
         return callback(null, true);
       } else {
-        return callback(new Error("CORS policy violation: Access denied"));
+        return callback(null, false); 
       }
     },
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     credentials: true,
     allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
   })
 );
+
+app.options("*", cors());
+app.get("/health", (req, res) => {
+  res.status(200).send("OK");
+});
 
 app.post(
   "/api/v1/payment/webhook",
