@@ -165,6 +165,7 @@ export const placeNewOrder = catchAsyncErrors(async (req, res, next) => {
         [pItem.quantity, pItem.productId]
       );
     }
+
     await client.query(
       `INSERT INTO shipping_info (
         order_id, full_name, state, city, country, address, pincode, phone
