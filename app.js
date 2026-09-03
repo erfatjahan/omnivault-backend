@@ -23,19 +23,23 @@ const allowedOrigins = [
   "http://localhost:3000",
   "https://omnivault-dashboard.vercel.app",
   "https://omnivault-frontend-one.vercel.app",
+  "https://sandbox.sslcommerz.com",
+  "https://securepay.sslcommerz.com",
   process.env.FRONTEND_URL,
   process.env.DASHBOARD_URL,
+  process.env.CLIENT_URL,
 ].filter(Boolean);
 
 app.use(
   cors({
     origin: function (origin, callback) {
       if (!origin) return callback(null, true);
-      
-      if (allowedOrigins.includes(origin)) {
+      if (
+        allowedOrigins.includes(origin) ||
+        origin.endsWith(".sslcommerz.com")
+      ) {
         return callback(null, true);
       } else {
-        
         return callback(new Error("CORS policy violation: Access denied"));
       }
     },
