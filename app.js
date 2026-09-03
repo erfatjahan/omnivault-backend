@@ -53,7 +53,7 @@ app.use(
   })
 );
 
-app.options("(.*)", cors());
+// app.options("(.*)", cors());
 app.get("/health", (req, res) => {
   res.status(200).send("OK");
 });
