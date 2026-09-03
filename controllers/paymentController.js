@@ -62,7 +62,9 @@ export const initSSLPayment = async (req, res, next) => {
 
 export const sslSuccess = async (req, res, next) => {
   try {
-    const { tran_id, order_id } = req.query;
+    const tran_id = req.query.tran_id || req.body.tran_id;
+    const order_id = req.query.order_id || req.body.value_a;
+
     const clientUrl = process.env.CLIENT_URL || "http://localhost:5173";
 
     if (order_id) {
@@ -73,19 +75,17 @@ export const sslSuccess = async (req, res, next) => {
         [tran_id, order_id]
       );
     }
-
-  
     return res.redirect(`${clientUrl}/orders?status=success`);
   } catch (error) {
     console.error("SSL Success Callback Error:", error);
-    next(error);
+    const clientUrl = process.env.CLIENT_URL || "http://localhost:5173";
+    return res.redirect(`${clientUrl}/orders?status=failed`);
   }
 };
 
-
 export const sslFail = async (req, res, next) => {
   try {
-    const { order_id } = req.query;
+    const order_id = req.query.order_id || req.body.value_a;
     const clientUrl = process.env.CLIENT_URL || "http://localhost:5173";
 
     if (order_id) {
@@ -100,14 +100,14 @@ export const sslFail = async (req, res, next) => {
     return res.redirect(`${clientUrl}/orders?status=failed`);
   } catch (error) {
     console.error("SSL Fail Callback Error:", error);
-    next(error);
+    const clientUrl = process.env.CLIENT_URL || "http://localhost:5173";
+    return res.redirect(`${clientUrl}/orders?status=failed`);
   }
 };
 
-
 export const sslCancel = async (req, res, next) => {
   try {
-    const { order_id } = req.query;
+    const order_id = req.query.order_id || req.body.value_a;
     const clientUrl = process.env.CLIENT_URL || "http://localhost:5173";
 
     if (order_id) {
@@ -122,6 +122,7 @@ export const sslCancel = async (req, res, next) => {
     return res.redirect(`${clientUrl}/orders?status=cancelled`);
   } catch (error) {
     console.error("SSL Cancel Callback Error:", error);
-    next(error);
+    const clientUrl = process.env.CLIENT_URL || "http://localhost:5173";
+    return res.redirect(`${clientUrl}/orders?status=cancelled`);
   }
 };
