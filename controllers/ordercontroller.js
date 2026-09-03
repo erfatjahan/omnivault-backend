@@ -39,9 +39,16 @@ export const placeNewOrder = catchAsyncErrors(async (req, res, next) => {
     return next(new ErrorHandler("No items in cart.", 400));
   }
 
-  // Product ID 
+  // Product ID extraction
   const productIds = items
-    .map((item) => item.product?.id || item.product?._id || item.productId || item.product_id || item.id)
+    .map(
+      (item) =>
+        item.product?.id ||
+        item.product?._id ||
+        item.productId ||
+        item.product_id ||
+        item.id
+    )
     .filter(Boolean);
 
   if (productIds.length === 0) {
@@ -56,9 +63,13 @@ export const placeNewOrder = catchAsyncErrors(async (req, res, next) => {
   let rawSubtotal = 0;
   const processedItems = [];
 
-
   for (const item of items) {
-    const pId = item.product?.id || item.product?._id || item.productId || item.product_id || item.id;
+    const pId =
+      item.product?.id ||
+      item.product?._id ||
+      item.productId ||
+      item.product_id ||
+      item.id;
     const product = products.find((p) => String(p.id) === String(pId));
 
     if (!product) {
@@ -82,9 +93,13 @@ export const placeNewOrder = catchAsyncErrors(async (req, res, next) => {
 
     let itemImage = "";
     if (item.image) {
-      itemImage = typeof item.image === "string" ? item.image : item.image?.url || "";
+      itemImage =
+        typeof item.image === "string" ? item.image : item.image?.url || "";
     } else if (product.images && product.images.length > 0) {
-      itemImage = typeof product.images[0] === "string" ? product.images[0] : product.images[0]?.url || "";
+      itemImage =
+        typeof product.images[0] === "string"
+          ? product.images[0]
+          : product.images[0]?.url || "";
     }
 
     processedItems.push({
@@ -96,16 +111,20 @@ export const placeNewOrder = catchAsyncErrors(async (req, res, next) => {
     });
   }
 
-  
   const tax_price = Number((rawSubtotal * 0.05).toFixed(2));
   const shipping_price = rawSubtotal >= 1500 ? 0.0 : 60.0;
-  const total_price = Number((rawSubtotal + tax_price + shipping_price).toFixed(2));
+  const total_price = Number(
+    (rawSubtotal + tax_price + shipping_price).toFixed(2)
+  );
 
- 
   const rawMethod = payment_type || payment_method;
   let sanitizedPaymentType = "COD";
   const incoming = String(rawMethod).toLowerCase();
-  if (incoming.includes("ssl") || incoming.includes("online") || incoming.includes("card")) {
+  if (
+    incoming.includes("ssl") ||
+    incoming.includes("online") ||
+    incoming.includes("card")
+  ) {
     sanitizedPaymentType = "SSLCommerz";
   } else if (incoming.includes("bkash")) {
     sanitizedPaymentType = "bKash";
@@ -127,7 +146,6 @@ export const placeNewOrder = catchAsyncErrors(async (req, res, next) => {
 
     const orderId = orderResult.rows[0].id;
 
-
     for (const pItem of processedItems) {
       await client.query(
         `INSERT INTO order_items (order_id, product_id, quantity, price, image, title)
@@ -147,7 +165,6 @@ export const placeNewOrder = catchAsyncErrors(async (req, res, next) => {
         [pItem.quantity, pItem.productId]
       );
     }
-
     await client.query(
       `INSERT INTO shipping_info (
         order_id, full_name, state, city, country, address, pincode, phone
@@ -170,14 +187,19 @@ export const placeNewOrder = catchAsyncErrors(async (req, res, next) => {
 
     let paymentResponse = { success: true, clientSecret: "" };
     if (typeof generatePaymentIntent === "function") {
-      paymentResponse = await generatePaymentIntent(orderId, total_price, sanitizedPaymentType);
+      paymentResponse = await generatePaymentIntent(
+        orderId,
+        total_price,
+        sanitizedPaymentType
+      );
     }
 
     res.status(201).json({
       success: true,
       message: `Order placed successfully. Proceeding to ${sanitizedPaymentType} payment.`,
       orderId,
-      paymentUrl: paymentResponse.paymentUrl || paymentResponse.clientSecret || "",
+      paymentUrl:
+        paymentResponse.paymentUrl || paymentResponse.clientSecret || "",
       payment_type: sanitizedPaymentType,
       total_price,
     });
@@ -187,7 +209,6 @@ export const placeNewOrder = catchAsyncErrors(async (req, res, next) => {
     return next(new ErrorHandler(error.message || "Failed to create order.", 500));
   }
 });
-
 
 export const fetchSingleOrder = catchAsyncErrors(async (req, res, next) => {
   const { orderId } = req.params;
@@ -216,6 +237,7 @@ export const fetchSingleOrder = catchAsyncErrors(async (req, res, next) => {
         SELECT to_json(s.*)
         FROM shipping_info s
         WHERE s.order_id::text = o.id::text
+        ORDER BY s.id DESC
         LIMIT 1
       ) AS shipping_info
     FROM orders o
@@ -234,7 +256,6 @@ export const fetchSingleOrder = catchAsyncErrors(async (req, res, next) => {
     order: result.rows[0],
   });
 });
-
 
 export const fetchMyOrders = catchAsyncErrors(async (req, res, next) => {
   const userId = req.user?.id || req.user?._id;
@@ -268,10 +289,12 @@ export const fetchMyOrders = catchAsyncErrors(async (req, res, next) => {
         SELECT to_json(s.*)
         FROM shipping_info s
         WHERE s.order_id::text = o.id::text
+        ORDER BY s.id DESC
         LIMIT 1
       ) AS shipping_info 
     FROM orders o
     WHERE o.buyer_id::text = $1::text
+    GROUP BY o.id
     ORDER BY o.created_at DESC;
     `,
     [userId]
@@ -300,7 +323,11 @@ export const fetchAllOrders = catchAsyncErrors(async (req, res, next) => {
       o.transaction_id,
       o.paid_at,
       o.created_at,
-      COALESCE(s.full_name, u.name, 'Customer') AS "customerName",
+      COALESCE(
+        (SELECT s.full_name FROM shipping_info s WHERE s.order_id::text = o.id::text ORDER BY s.id DESC LIMIT 1),
+        u.name,
+        'Customer'
+      ) AS "customerName",
       COALESCE(u.email, 'N/A') AS "customerEmail",
       COALESCE(
         (
@@ -330,11 +357,12 @@ export const fetchAllOrders = catchAsyncErrors(async (req, res, next) => {
         SELECT to_json(s.*)
         FROM shipping_info s
         WHERE s.order_id::text = o.id::text
+        ORDER BY s.id DESC
         LIMIT 1
       ) AS shipping_info
     FROM orders o
     LEFT JOIN users u ON u.id::text = o.buyer_id::text
-    LEFT JOIN shipping_info s ON s.order_id::text = o.id::text
+    GROUP BY o.id, u.name, u.email
     ORDER BY o.created_at DESC;
   `);
 
@@ -345,7 +373,6 @@ export const fetchAllOrders = catchAsyncErrors(async (req, res, next) => {
   });
 });
 
-
 export const updateOrderStatus = catchAsyncErrors(async (req, res, next) => {
   const { status, order_status, payment_status } = req.body;
   const { orderId } = req.params;
@@ -353,7 +380,9 @@ export const updateOrderStatus = catchAsyncErrors(async (req, res, next) => {
   const newStatus = status || order_status;
 
   if (!newStatus && !payment_status) {
-    return next(new ErrorHandler("Please provide a valid status to update.", 400));
+    return next(
+      new ErrorHandler("Please provide a valid status to update.", 400)
+    );
   }
 
   const results = await database.query(
@@ -386,12 +415,17 @@ export const updateOrderStatus = catchAsyncErrors(async (req, res, next) => {
   });
 });
 
-
 export const deleteOrder = catchAsyncErrors(async (req, res, next) => {
   const { orderId } = req.params;
 
-  await database.query(`DELETE FROM order_items WHERE order_id::text = $1::text`, [orderId]);
-  await database.query(`DELETE FROM shipping_info WHERE order_id::text = $1::text`, [orderId]);
+  await database.query(
+    `DELETE FROM order_items WHERE order_id::text = $1::text`,
+    [orderId]
+  );
+  await database.query(
+    `DELETE FROM shipping_info WHERE order_id::text = $1::text`,
+    [orderId]
+  );
 
   const results = await database.query(
     `DELETE FROM orders WHERE id::text = $1::text RETURNING *`,
