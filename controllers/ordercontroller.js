@@ -437,6 +437,7 @@ export const deleteOrder = catchAsyncErrors(async (req, res, next) => {
     order: results.rows[0],
   });
 });
+
 export const cancelMyOrder = catchAsyncErrors(async (req, res, next) => {
   const { orderId } = req.params;
   const userId = req.user?.id || req.user?._id;
@@ -444,6 +445,7 @@ export const cancelMyOrder = catchAsyncErrors(async (req, res, next) => {
   if (!userId) {
     return next(new ErrorHandler("Please login to cancel order.", 401));
   }
+
   const orderCheck = await database.query(
     `SELECT * FROM orders WHERE id::text = $1::text AND buyer_id::text = $2::text`,
     [orderId, userId]
@@ -480,7 +482,7 @@ export const cancelMyOrder = catchAsyncErrors(async (req, res, next) => {
     }
     const updated = await client.query(
       `UPDATE orders 
-       SET order_status = 'Cancelled', payment_status = 'Cancelled' 
+       SET order_status = 'Cancelled' 
        WHERE id::text = $1::text 
        RETURNING *`,
       [orderId]
@@ -488,12 +490,20 @@ export const cancelMyOrder = catchAsyncErrors(async (req, res, next) => {
 
     await client.query("COMMIT");
     client.release();
+    const isPaidOnline = currentOrder.payment_status === "Paid";
+    const refundedAmount = Number(currentOrder.total_price || 0).toFixed(2);
+    const paymentGateway = currentOrder.payment_method || "original payment method";
+
+    const responseMessage = isPaidOnline
+      ? `Your order has been cancelled. Since the payment was already completed online, your refund of ৳${refundedAmount} will be processed back to your ${paymentGateway} within 3–7 business days.`
+      : "Your order has been cancelled successfully.";
 
     res.status(200).json({
       success: true,
-      message: "Order has been cancelled successfully.",
+      message: responseMessage,
       order: updated.rows[0],
       orderId,
+      isPaidOnline,
     });
   } catch (error) {
     await client.query("ROLLBACK");
