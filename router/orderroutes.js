@@ -6,6 +6,7 @@ import {
   fetchAllOrders,
   updateOrderStatus,
   deleteOrder,
+  cancelMyOrder,
 } from "../controllers/ordercontroller.js";
 import {
   isAuthenticated,
@@ -14,10 +15,13 @@ import {
 
 const router = express.Router();
 
+// User Order Routes
 router.post("/new", isAuthenticated, placeNewOrder);
 router.get("/my-orders", isAuthenticated, fetchMyOrders);
 router.get("/orders/me", isAuthenticated, fetchMyOrders);
+router.put("/cancel/:orderId", isAuthenticated, cancelMyOrder);
 
+// Admin Order Routes
 router.get(
   "/admin/orders",
   isAuthenticated,
@@ -43,7 +47,6 @@ router.put(
   authorizedRoles("Admin"),
   updateOrderStatus
 );
-
 
 router.delete(
   "/admin/order/:orderId",
