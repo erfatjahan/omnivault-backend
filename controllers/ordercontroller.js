@@ -4,28 +4,23 @@ import database from "../database/db.js";
 import { generatePaymentIntent } from "../utils/generatepayment.js";
 
 export const placeNewOrder = catchAsyncErrors(async (req, res, next) => {
+  const rawShipping = req.body.shipping_info || req.body.shippingInfo || {};
+
+  const full_name = (req.body.full_name || rawShipping.full_name || rawShipping.fullName || "").trim();
+  const phone = (req.body.phone || rawShipping.phone || "").trim();
+  const address = (req.body.address || rawShipping.address || "").trim();
+  const city = (req.body.city || rawShipping.city || "").trim();
+  const country = (req.body.country || rawShipping.country || "Bangladesh").trim();
+  const pincode = (req.body.pincode || rawShipping.pincode || rawShipping.postal_code || "").trim();
+  const state = (req.body.state || rawShipping.state || city || "Bangladesh").trim();
+
   const {
-    full_name,
-    state,
-    city,
-    country,
-    address,
-    pincode,
-    phone,
     orderedItems,
     payment_type = "COD",
     payment_method = "COD",
   } = req.body;
 
-  if (
-    !full_name ||
-    !state ||
-    !city ||
-    !country ||
-    !address ||
-    !pincode ||
-    !phone
-  ) {
+  if (!full_name || !phone || !address || !city || !pincode) {
     return next(
       new ErrorHandler("Please provide complete shipping details.", 400)
     );
@@ -39,7 +34,6 @@ export const placeNewOrder = catchAsyncErrors(async (req, res, next) => {
     return next(new ErrorHandler("No items in cart.", 400));
   }
 
-  // Product ID extraction
   const productIds = items
     .map(
       (item) =>
@@ -442,4 +436,68 @@ export const deleteOrder = catchAsyncErrors(async (req, res, next) => {
     message: "Order deleted successfully.",
     order: results.rows[0],
   });
+});
+export const cancelMyOrder = catchAsyncErrors(async (req, res, next) => {
+  const { orderId } = req.params;
+  const userId = req.user?.id || req.user?._id;
+
+  if (!userId) {
+    return next(new ErrorHandler("Please login to cancel order.", 401));
+  }
+  const orderCheck = await database.query(
+    `SELECT * FROM orders WHERE id::text = $1::text AND buyer_id::text = $2::text`,
+    [orderId, userId]
+  );
+
+  if (orderCheck.rows.length === 0) {
+    return next(new ErrorHandler("Order not found or unauthorized.", 404));
+  }
+
+  const currentOrder = orderCheck.rows[0];
+  if (String(currentOrder.order_status).toLowerCase() !== "pending") {
+    return next(
+      new ErrorHandler(
+        `Cannot cancel order with status '${currentOrder.order_status}'. Only pending orders can be cancelled.`,
+        400
+      )
+    );
+  }
+
+  const client = await database.connect();
+
+  try {
+    await client.query("BEGIN");
+    const itemsResult = await client.query(
+      `SELECT product_id, quantity FROM order_items WHERE order_id::text = $1::text`,
+      [orderId]
+    );
+
+    for (const item of itemsResult.rows) {
+      await client.query(
+        `UPDATE products SET stock = stock + $1 WHERE id::text = $2::text`,
+        [item.quantity, item.product_id]
+      );
+    }
+    const updated = await client.query(
+      `UPDATE orders 
+       SET order_status = 'Cancelled', payment_status = 'Cancelled' 
+       WHERE id::text = $1::text 
+       RETURNING *`,
+      [orderId]
+    );
+
+    await client.query("COMMIT");
+    client.release();
+
+    res.status(200).json({
+      success: true,
+      message: "Order has been cancelled successfully.",
+      order: updated.rows[0],
+      orderId,
+    });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    client.release();
+    return next(new ErrorHandler(error.message || "Failed to cancel order.", 500));
+  }
 });
