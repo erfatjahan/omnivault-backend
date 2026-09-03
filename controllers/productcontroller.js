@@ -278,6 +278,8 @@ export const fetchSingleProduct = catchAsyncErrors(async (req, res, next) => {
 export const postProductReview = catchAsyncErrors(async (req, res, next) => {
   const { productId } = req.params;
   const { rating, comment } = req.body;
+  const userId = req.user?.id || req.user?._id;
+
   if (!rating || !comment) {
     return next(new ErrorHandler("Please provide rating and comment.", 400));
   }
@@ -286,22 +288,25 @@ export const postProductReview = catchAsyncErrors(async (req, res, next) => {
     SELECT oi.product_id
     FROM order_items oi
     JOIN orders o ON o.id::text = oi.order_id::text
-    JOIN payments p ON p.order_id::text = o.id::text
     WHERE o.buyer_id::text = $1::text
-    AND oi.product_id::text = $2::text
-    AND p.payment_status = 'Paid'
-    LIMIT 1 
+      AND oi.product_id::text = $2::text
+      AND (
+        LOWER(TRIM(COALESCE(o.order_status, ''))) = 'delivered'
+        OR LOWER(TRIM(COALESCE(o.order_status, ''))) = 'completed'
+        OR LOWER(TRIM(COALESCE(o.payment_status, ''))) = 'paid'
+      )
+    LIMIT 1;
   `;
 
   const { rows } = await database.query(purchaseCheckQuery, [
-    req.user.id,
+    userId,
     productId,
   ]);
 
   if (rows.length === 0) {
     return res.status(403).json({
       success: false,
-      message: "You can only review a product you've purchased.",
+      message: "You can only review a product you've purchased and received.",
     });
   }
 
@@ -314,19 +319,19 @@ export const postProductReview = catchAsyncErrors(async (req, res, next) => {
 
   const isAlreadyReviewed = await database.query(
     `SELECT * FROM reviews WHERE product_id::text = $1::text AND user_id::text = $2::text`,
-    [productId, req.user.id]
+    [productId, userId]
   );
 
   let review;
   if (isAlreadyReviewed.rows.length > 0) {
     review = await database.query(
       "UPDATE reviews SET rating = $1, comment = $2 WHERE product_id::text = $3::text AND user_id::text = $4::text RETURNING *",
-      [rating, comment, productId, req.user.id]
+      [rating, comment, productId, userId]
     );
   } else {
     review = await database.query(
       "INSERT INTO reviews (product_id, user_id, rating, comment) VALUES ($1, $2, $3, $4) RETURNING *",
-      [productId, req.user.id, rating, comment]
+      [productId, userId, rating, comment]
     );
   }
 
@@ -344,7 +349,7 @@ export const postProductReview = catchAsyncErrors(async (req, res, next) => {
 
   res.status(200).json({
     success: true,
-    message: "Review posted.",
+    message: "Review posted successfully.",
     review: review.rows[0],
     product: updatedProduct.rows[0],
   });
@@ -352,9 +357,11 @@ export const postProductReview = catchAsyncErrors(async (req, res, next) => {
 
 export const deleteReview = catchAsyncErrors(async (req, res, next) => {
   const { productId } = req.params;
+  const userId = req.user?.id || req.user?._id;
+
   const review = await database.query(
     "DELETE FROM reviews WHERE product_id::text = $1::text AND user_id::text = $2::text RETURNING *",
-    [productId, req.user.id]
+    [productId, userId]
   );
 
   if (review.rows.length === 0) {
