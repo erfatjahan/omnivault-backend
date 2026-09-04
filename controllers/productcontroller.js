@@ -2,7 +2,21 @@ import { catchAsyncErrors } from "../middlewares/catchAsyncError.js";
 import ErrorHandler from "../middlewares/errorMiddleware.js";
 import { v2 as cloudinary } from "cloudinary";
 import database from "../database/db.js";
-import { getAIRecommendation } from "../utils/aigetrecommendation.js";
+import { GoogleGenerativeAI } from "@google/generative-ai";
+
+// Initialize Google GenAI
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+
+async function getEmbedding(text) {
+  try {
+    const model = genAI.getGenerativeModel({ model: "text-embedding-004" });
+    const result = await model.embedContent(text);
+    return result.embedding.values;
+  } catch (error) {
+    console.error("Embedding generation error:", error);
+    return null;
+  }
+}
 
 export const createProduct = catchAsyncErrors(async (req, res, next) => {
   const { name, description, price, category, stock } = req.body;
@@ -13,6 +27,10 @@ export const createProduct = catchAsyncErrors(async (req, res, next) => {
       new ErrorHandler("Please provide complete product details.", 400)
     );
   }
+
+  const combinedText = `${name} category: ${category} details: ${description}`;
+  const vectorValues = await getEmbedding(combinedText);
+  const vectorString = vectorValues ? `[${vectorValues.join(",")}]` : null;
 
   let uploadedImages = [];
   if (req.files && req.files.images) {
@@ -35,7 +53,8 @@ export const createProduct = catchAsyncErrors(async (req, res, next) => {
   }
 
   const product = await database.query(
-    `INSERT INTO products (name, description, price, category, stock, images, created_by) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+    `INSERT INTO products (name, description, price, category, stock, images, created_by, embedding) 
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8::vector) RETURNING *`,
     [
       name,
       description,
@@ -44,6 +63,7 @@ export const createProduct = catchAsyncErrors(async (req, res, next) => {
       Number(stock),
       JSON.stringify(uploadedImages),
       created_by,
+      vectorString,
     ]
   );
 
@@ -111,6 +131,7 @@ export const fetchAllProducts = catchAsyncErrors(async (req, res, next) => {
   const fetchParams = [...queryParams, limit, offset];
   const limitPlaceholder = `$${paramIndex}`;
   const offsetPlaceholder = `$${paramIndex + 1}`;
+  
   const query = `
     SELECT p.*, 
     COALESCE(COUNT(r.id), 0)::integer AS review_count 
@@ -172,10 +193,13 @@ export const updateProduct = catchAsyncErrors(async (req, res, next) => {
   if (product.rows.length === 0) {
     return next(new ErrorHandler("Product not found.", 404));
   }
+  const combinedText = `${name} category: ${category} details: ${description}`;
+  const vectorValues = await getEmbedding(combinedText);
+  const vectorString = vectorValues ? `[${vectorValues.join(",")}]` : null;
 
   const result = await database.query(
-    `UPDATE products SET name = $1, description = $2, price = $3, category = $4, stock = $5 WHERE id::text = $6::text RETURNING *`,
-    [name, description, Number(price), category, Number(stock), productId]
+    `UPDATE products SET name = $1, description = $2, price = $3, category = $4, stock = $5, embedding = $6::vector WHERE id::text = $7::text RETURNING *`,
+    [name, description, Number(price), category, Number(stock), vectorString, productId]
   );
 
   res.status(200).json({
@@ -185,6 +209,7 @@ export const updateProduct = catchAsyncErrors(async (req, res, next) => {
   });
 });
 
+// 4. Delete Product
 export const deleteProduct = catchAsyncErrors(async (req, res, next) => {
   const { productId } = req.params;
 
@@ -196,11 +221,10 @@ export const deleteProduct = catchAsyncErrors(async (req, res, next) => {
   }
 
   const images = product.rows[0].images;
-
   const client = await database.connect();
+  
   try {
     await client.query("BEGIN");
-
     await client.query("DELETE FROM reviews WHERE product_id::text = $1::text", [productId]);
 
     const deleteResult = await client.query(
@@ -235,6 +259,7 @@ export const deleteProduct = catchAsyncErrors(async (req, res, next) => {
   });
 });
 
+// 5. Fetch Single Product
 export const fetchSingleProduct = catchAsyncErrors(async (req, res, next) => {
   const { productId } = req.params;
 
@@ -275,6 +300,7 @@ export const fetchSingleProduct = catchAsyncErrors(async (req, res, next) => {
   });
 });
 
+// 6. Post Product Review
 export const postProductReview = catchAsyncErrors(async (req, res, next) => {
   const { productId } = req.params;
   const { rating, comment } = req.body;
@@ -355,6 +381,7 @@ export const postProductReview = catchAsyncErrors(async (req, res, next) => {
   });
 });
 
+// 7. Delete Review
 export const deleteReview = catchAsyncErrors(async (req, res, next) => {
   const { productId } = req.params;
   const userId = req.user?.id || req.user?._id;
@@ -388,37 +415,40 @@ export const deleteReview = catchAsyncErrors(async (req, res, next) => {
   });
 });
 
+// 8. AI Semantic Search (Neon PostgreSQL pgvector powered via Cosine Distance)
 export const fetchAIFilteredProducts = catchAsyncErrors(
   async (req, res, next) => {
     const { userPrompt } = req.body;
-    if (!userPrompt) {
+
+    if (!userPrompt || !userPrompt.trim()) {
       return next(new ErrorHandler("Provide a valid prompt.", 400));
     }
-    const result = await database.query(
-      `SELECT * FROM products ORDER BY created_at DESC LIMIT 150;`
-    );
+    const queryVector = await getEmbedding(userPrompt);
 
-    const allProducts = result.rows;
-
-    if (allProducts.length === 0) {
-      return res.status(200).json({
-        success: true,
-        message: "No products available in store.",
-        products: [],
-      });
+    if (!queryVector) {
+      return next(new ErrorHandler("Failed to process AI search query.", 500));
     }
 
-    const { success, products } = await getAIRecommendation(
-      req,
-      res,
-      userPrompt,
-      allProducts
-    );
+    const vectorString = `[${queryVector.join(",")}]`;
+    const query = `
+      SELECT p.*, 
+             1 - (p.embedding <=> $1::vector) AS similarity,
+             COALESCE(COUNT(r.id), 0)::integer AS review_count 
+      FROM products p 
+      LEFT JOIN reviews r ON p.id::text = r.product_id::text
+      WHERE p.embedding IS NOT NULL
+      GROUP BY p.id
+      ORDER BY p.embedding <=> $1::vector ASC
+      LIMIT 15;
+    `;
+
+    const result = await database.query(query, [vectorString]);
 
     res.status(200).json({
-      success: success ?? true,
-      message: "AI filtered products.",
-      products: products || [],
+      success: true,
+      message: "AI filtered products fetched successfully.",
+      count: result.rows.length,
+      products: result.rows,
     });
   }
 );
