@@ -9,7 +9,8 @@ export const getAIRecommendation = async (req, res, userPrompt, products) => {
 
   const queryLower = userPrompt.toLowerCase().trim();
   const queryWords = queryLower.split(/\s+/).filter(word => word.length > 1);
-  const scoredProducts = products.map(p => {
+  
+  const scoredProducts = products.map((p, index) => {
     let score = 0;
     const title = String(p.name || p.title || "").toLowerCase();
     const cat = String(p.category?.name || p.category || "").toLowerCase();
@@ -25,15 +26,16 @@ export const getAIRecommendation = async (req, res, userPrompt, products) => {
       if (desc.includes(word)) score += 2;
     });
 
-    return { product: p, score };
+    return { product: p, score, index };
   });
 
   scoredProducts.sort((a, b) => b.score - a.score);
-
-  const relevantPool = scoredProducts.filter(item => item.score > 0).map(item => item.product);
+  let relevantPool = scoredProducts
+    .filter(item => item.score > 0)
+    .map(item => item.product);
 
   if (relevantPool.length === 0) {
-    return { success: true, products: [] };
+    relevantPool = products;
   }
 
   const catalog = relevantPool.slice(0, 60).map((p, index) => ({
@@ -45,7 +47,7 @@ export const getAIRecommendation = async (req, res, userPrompt, products) => {
   const systemInstruction = `
 You are an expert e-commerce semantic search engine.
 Your core job is to understand natural language, Banglish (e.g., "bacchader jinid", "vlo phone", "kapor"), Bengali, and English.
-- Interpret the user's intent smartly and match it with the correct items from the provided product list, even if the exact words don't match.
+- Interpret the user's intent smartly and match it with the correct items from the provided product list, even if the exact words don't match (e.g., "bacchader" maps to "kids", "toys", etc.).
 - Return ONLY a JSON array of matching product ID strings from the provided list.
 Example format: ["1", "2"]
 If nothing matches, return: []
@@ -87,6 +89,7 @@ If nothing matches, return: []
   } catch (err) {
     console.warn(`AI Search failed, using smart scored pool:`, err.message);
   }
+
   return {
     success: true,
     products: relevantPool.slice(0, 15),
