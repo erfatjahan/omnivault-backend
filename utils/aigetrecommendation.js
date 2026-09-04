@@ -6,31 +6,35 @@ export const getAIRecommendation = async (req, res, userPrompt, products) => {
   if (!apiKey || !products || products.length === 0) {
     return { success: true, products: [] };
   }
-
   const catalog = products.map((p, index) => ({
     id: String(p.id ?? p.product_id ?? p._id ?? p.id_product ?? index),
     title: p.name || p.title || p.product_name || "",
     category: p.category?.name || p.category || p.category_name || "",
-    description: p.description ? String(p.description).slice(0, 160) : "",
+    description: p.description ? String(p.description).slice(0, 90) : "",
     price: Number(p.price || 0),
   }));
 
+  const systemInstruction = `
+You are an advanced e-commerce semantic search engine.
+Your task is to understand natural language, Banglish, Bengali, and English.
+CRITICAL RULES:
+- Map user intent smartly. For example, if a user searches for "kids", "bacchader", or "children", match products related to kids, toys, baby, or children's items even if the exact word isn't in the title.
+- Return ONLY a JSON array of matching product ID strings from the provided list.
+Example format: ["1", "2"]
+If nothing matches, return: []
+`;
+
   const prompt = `
-You are an e-commerce semantic search engine.
 User Query: "${userPrompt}"
 
 Store Products:
 ${JSON.stringify(catalog)}
-
-Task:
-- Understand natural language, Banglish (e.g. "vlo mobile", "bhalo phone", "kapor"), Bengali, and English.
-- Return ONLY a JSON array of matching product ID strings from the list.
-Example: ["1", "2"]
-If nothing matches, return: []
 `;
+
+
   const candidateModels = [
-    "gemini-3.6-flash",
-    "gemini-3.6-flash-latest",
+    "gemini-2.5-flash",
+    "gemini-1.5-flash",
   ];
 
   const genAI = new GoogleGenerativeAI(apiKey);
@@ -40,6 +44,7 @@ If nothing matches, return: []
       const model = genAI.getGenerativeModel(
         {
           model: modelName,
+          systemInstruction: systemInstruction,
           generationConfig: {
             responseMimeType: "application/json",
             temperature: 0.1,
@@ -53,7 +58,7 @@ If nothing matches, return: []
       const cleanJson = responseText.replace(/```json|```/g, "").trim();
       const matchedIds = JSON.parse(cleanJson);
 
-      if (Array.isArray(matchedIds)) {
+      if (Array.isArray(matchedIds) && matchedIds.length > 0) {
         const matchedIdSet = new Set(matchedIds.map(String));
 
         const matchedProducts = products.filter((p, index) => {
@@ -61,15 +66,27 @@ If nothing matches, return: []
           return matchedIdSet.has(currentId);
         });
 
-        return {
-          success: true,
-          products: matchedProducts,
-        };
+        if (matchedProducts.length > 0) {
+          return {
+            success: true,
+            products: matchedProducts,
+          };
+        }
       }
     } catch (err) {
       console.warn(`Model ${modelName} attempt failed:`, err.message);
     }
   }
+  const queryLower = userPrompt.toLowerCase().trim();
+  const fallbackProducts = products.filter((p) => {
+    const title = String(p.name || p.title || "").toLowerCase();
+    const cat = String(p.category?.name || p.category || "").toLowerCase();
+    const desc = String(p.description || "").toLowerCase();
+    return title.includes(queryLower) || cat.includes(queryLower) || desc.includes(queryLower);
+  });
 
-  return { success: true, products: [] };
+  return {
+    success: true,
+    products: fallbackProducts,
+  };
 };
