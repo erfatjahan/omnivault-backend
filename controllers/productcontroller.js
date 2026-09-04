@@ -17,7 +17,6 @@ async function getEmbedding(text) {
     return null;
   }
 }
-
 export const createProduct = catchAsyncErrors(async (req, res, next) => {
   const { name, description, price, category, stock } = req.body;
   const created_by = req.user?.id;
