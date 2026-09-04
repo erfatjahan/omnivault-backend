@@ -9,7 +9,7 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 async function getEmbedding(text) {
   try {
-    const model = genAI.getGenerativeModel({ model: "text-embedding-004" });
+    const model = genAI.getGenerativeModel({ model: "text-embedding-001" });
     const result = await model.embedContent(text);
     return result.embedding.values;
   } catch (error) {
