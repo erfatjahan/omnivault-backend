@@ -465,7 +465,7 @@ export const fetchAIFilteredProducts = catchAsyncErrors(
       });
 
       filteredProducts = scoredProducts
-        .filter((p) => p.similarity >= 0.53)
+        .filter((p) => p.similarity >= 0.52)
         .sort((a, b) => b.similarity - a.similarity)
         .slice(0, 15);
     }
