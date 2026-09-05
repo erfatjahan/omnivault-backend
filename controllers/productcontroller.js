@@ -416,22 +416,57 @@ export const deleteReview = catchAsyncErrors(async (req, res, next) => {
 });
 
 // 8. AI Semantic Search (Neon PostgreSQL pgvector powered with Similarity Filter)
+// export const fetchAIFilteredProducts = catchAsyncErrors(
+//   async (req, res, next) => {
+//     const { userPrompt } = req.body;
+
+//     if (!userPrompt || !userPrompt.trim()) {
+//       return next(new ErrorHandler("Provide a valid prompt.", 400));
+//     }
+//     const queryVector = await getEmbedding(userPrompt);
+
+//     if (!queryVector) {
+//       return next(new ErrorHandler("Failed to process AI search query.", 500));
+//     }
+
+//     const vectorString = `[${queryVector.join(",")}]`;
+    
+//     // Added HAVING clause to filter out irrelevant products (threshold >= 0.3)
+//     const query = `
+//       SELECT p.*, 
+//              1 - (p.embedding <=> $1::vector) AS similarity,
+//              COALESCE(COUNT(r.id), 0)::integer AS review_count 
+//       FROM products p 
+//       LEFT JOIN reviews r ON p.id::text = r.product_id::text
+//       WHERE p.embedding IS NOT NULL
+//       GROUP BY p.id
+//       HAVING (1 - (p.embedding <=> $1::vector)) >= 0.25
+//       ORDER BY similarity DESC
+//       LIMIT 15;
+//     `;
+
+//     const result = await database.query(query, [vectorString]);
+
+//     res.status(200).json({
+//       success: true,
+//       message: "AI filtered products fetched successfully.",
+//       count: result.rows.length,
+//       products: result.rows,
+//     });
+//   }
+// );
+// 8. AI Semantic Search (Neon PostgreSQL pgvector powered with Similarity Filter)
 export const fetchAIFilteredProducts = catchAsyncErrors(
   async (req, res, next) => {
     const { userPrompt } = req.body;
-
     if (!userPrompt || !userPrompt.trim()) {
       return next(new ErrorHandler("Provide a valid prompt.", 400));
     }
     const queryVector = await getEmbedding(userPrompt);
-
     if (!queryVector) {
       return next(new ErrorHandler("Failed to process AI search query.", 500));
     }
-
     const vectorString = `[${queryVector.join(",")}]`;
-    
-    // Added HAVING clause to filter out irrelevant products (threshold >= 0.3)
     const query = `
       SELECT p.*, 
              1 - (p.embedding <=> $1::vector) AS similarity,
@@ -440,13 +475,11 @@ export const fetchAIFilteredProducts = catchAsyncErrors(
       LEFT JOIN reviews r ON p.id::text = r.product_id::text
       WHERE p.embedding IS NOT NULL
       GROUP BY p.id
-      HAVING (1 - (p.embedding <=> $1::vector)) >= 0.25
+      HAVING (1 - (p.embedding <=> $1::vector)) >= 0.45
       ORDER BY similarity DESC
       LIMIT 15;
     `;
-
     const result = await database.query(query, [vectorString]);
-
     res.status(200).json({
       success: true,
       message: "AI filtered products fetched successfully.",
