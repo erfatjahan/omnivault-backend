@@ -428,6 +428,7 @@ export const deleteReview = catchAsyncErrors(async (req, res, next) => {
     product: updatedProduct.rows[0],
   });
 });
+// 8. Professional AI Semantic Search with Fallback & Smart Threshold
 export const fetchAIFilteredProducts = catchAsyncErrors(
   async (req, res, next) => {
     const { userPrompt } = req.body;
@@ -437,9 +438,8 @@ export const fetchAIFilteredProducts = catchAsyncErrors(
     }
 
     const queryVector = await getEmbedding(userPrompt);
-    if (!queryVector) {
-      return next(new ErrorHandler("Failed to process AI search query.", 500));
-    }
+    
+    // Database theke shob product embedding shoho tule ana
     const query = `
       SELECT p.*, 
              COALESCE(COUNT(r.id), 0)::integer AS review_count 
@@ -450,21 +450,48 @@ export const fetchAIFilteredProducts = catchAsyncErrors(
     `;
 
     const result = await database.query(query);
-    const scoredProducts = result.rows.map((product) => {
-      let prodEmbedding = product.embedding;
-      if (typeof prodEmbedding === 'string') {
-        prodEmbedding = JSON.parse(
-          prodEmbedding.replace('{', '[').replace('}', ']')
-        );
-      }
 
-      const similarity = calculateCosineSimilarity(queryVector, prodEmbedding);
-      return { ...product, similarity };
-    });
-    const filteredProducts = scoredProducts
-      .filter((p) => p.similarity >= 0.55)
-      .sort((a, b) => b.similarity - a.similarity)
-      .slice(0, 15);
+    let filteredProducts = [];
+
+    // Jodi embedding successfully toiri hoy, tahole AI Vector Search cholbe
+    if (queryVector) {
+      const scoredProducts = result.rows.map((product) => {
+        let prodEmbedding = product.embedding;
+        if (typeof prodEmbedding === 'string') {
+          prodEmbedding = JSON.parse(
+            prodEmbedding.replace('{', '[').replace('}', ']')
+          );
+        }
+
+        const similarity = calculateCosineSimilarity(queryVector, prodEmbedding);
+        return { ...product, similarity };
+      });
+
+      // Threshold ektu flexible (0.40) kora holo jate natural language ba description match kore
+      filteredProducts = scoredProducts
+        .filter((p) => p.similarity >= 0.40)
+        .sort((a, b) => b.similarity - a.similarity)
+        .slice(0, 15);
+    }
+
+    // 🔥 FALLBACK MECHANISM: AI search-e jodi kono product na paowa jay (empty thake),
+    // tahole keyword matching (ILIKE) diye khuje ber korbe, jate user konodin 'null' ba khali page na pay!
+    if (filteredProducts.length === 0) {
+      const searchKeywords = userPrompt.trim().split(" ").map(word => `%${word}%`);
+      
+      const fallbackQuery = `
+        SELECT p.*, 
+               0.5 AS similarity,
+               COALESCE(COUNT(r.id), 0)::integer AS review_count 
+        FROM products p 
+        LEFT JOIN reviews r ON p.id::text = r.product_id::text
+        WHERE p.name ILIKE ANY($1::text[]) OR p.description ILIKE ANY($1::text[]) OR p.category ILIKE ANY($1::text[])
+        GROUP BY p.id
+        LIMIT 15;
+      `;
+      const fallbackResult = await database.query(fallbackQuery, [searchKeywords]);
+      filteredProducts = fallbackResult.rows;
+    }
 
     res.status(200).json({
       success: true,
