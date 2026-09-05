@@ -459,18 +459,20 @@ export const fetchAIFilteredProducts = catchAsyncErrors(
         const similarity = calculateCosineSimilarity(queryVector, prodEmbedding);
         return { ...product, similarity };
       });
+
       filteredProducts = scoredProducts
-        .filter((p) => p.similarity >= 0.30)
+        .filter((p) => p.similarity >= 0.58)
         .sort((a, b) => b.similarity - a.similarity)
         .slice(0, 15);
     }
+
     if (filteredProducts.length === 0) {
       const searchTerm = `%${userPrompt.trim()}%`;
       const searchKeywords = userPrompt.trim().split(" ").map(word => `%${word}%`);
       
       const fallbackQuery = `
         SELECT p.*, 
-               0.4 AS similarity,
+               0.5 AS similarity,
                COALESCE(COUNT(r.id), 0)::integer AS review_count 
         FROM products p 
         LEFT JOIN reviews r ON p.id::text = r.product_id::text
