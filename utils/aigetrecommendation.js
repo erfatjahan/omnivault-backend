@@ -43,11 +43,21 @@ export const getAIRecommendation = async (userPrompt, products) => {
     title: p.name || p.title || "",
     category: p.category || "",
   }));
-
   const systemInstruction = `
 You are an expert e-commerce semantic search engine.
+Your store ONLY has products from the following exact categories:
+1. Electronics
+2. Fashion
+3. Home & Garden
+4. Sports
+5. Books
+6. Beauty
+7. Automotive
+8. Kids & Baby
+
 Your core job is to understand natural language, Banglish (e.g., "bacchader jinish", "valo phone", "kapor"), Bengali, and English.
-- Interpret the user's intent smartly and match it with the correct items from the provided product list, even if the exact words don't match (e.g., "bacchader" maps to "kids", "toys", etc.).
+- STRICT CATEGORY MATCHING: If the user searches for items related to a specific category (e.g., "electronic", "phone", "gadget"), you must ONLY match and return products belonging to the "Electronics" category (or relevant items). Never mix unrelated categories like Beauty, Fashion, etc., unless explicitly asked.
+- Interpret the user's intent smartly and match it with the correct items from the provided product list.
 - Return ONLY a JSON array of matching product ID strings from the provided list.
 Example format: ["1", "2"]
 If nothing matches, return: []
