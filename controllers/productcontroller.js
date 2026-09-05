@@ -17,6 +17,7 @@ async function getEmbedding(text) {
     return null;
   }
 }
+
 export const createProduct = catchAsyncErrors(async (req, res, next) => {
   const { name, description, price, category, stock } = req.body;
   const created_by = req.user?.id;
@@ -414,7 +415,7 @@ export const deleteReview = catchAsyncErrors(async (req, res, next) => {
   });
 });
 
-// 8. AI Semantic Search (Neon PostgreSQL pgvector powered via Cosine Distance)
+// 8. AI Semantic Search (Neon PostgreSQL pgvector powered with Similarity Filter)
 export const fetchAIFilteredProducts = catchAsyncErrors(
   async (req, res, next) => {
     const { userPrompt } = req.body;
@@ -429,6 +430,8 @@ export const fetchAIFilteredProducts = catchAsyncErrors(
     }
 
     const vectorString = `[${queryVector.join(",")}]`;
+    
+    // Added HAVING clause to filter out irrelevant products (threshold >= 0.3)
     const query = `
       SELECT p.*, 
              1 - (p.embedding <=> $1::vector) AS similarity,
@@ -437,7 +440,8 @@ export const fetchAIFilteredProducts = catchAsyncErrors(
       LEFT JOIN reviews r ON p.id::text = r.product_id::text
       WHERE p.embedding IS NOT NULL
       GROUP BY p.id
-      ORDER BY p.embedding <=> $1::vector ASC
+      HAVING (1 - (p.embedding <=> $1::vector)) >= 0.25
+      ORDER BY similarity DESC
       LIMIT 15;
     `;
 
