@@ -249,47 +249,24 @@ export const updateProfile = catchAsyncErrors(async (req, res, next) => {
     };
   }
 
-  // let user;
-  // if (!avatarData) {
-  //   user = await database.query(
-  //     "UPDATE users SET name = $1, email = LOWER($2) WHERE id = $3 RETURNING *",
-  //     [name, email, req.user.id]
-  //   );
-  // } else {
-  //   user = await database.query(
-  //     "UPDATE users SET name = $1, email = LOWER($2), avatar = $3 WHERE id = $4 RETURNING *",
-  //     [name, email, JSON.stringify(avatarData), req.user.id]
-  //   );
-  // }
-let user ;
-if(Object.keys(avatarData).length===0){
-  user=await database.query(
-"    UPDATE users SET =$1,email=$2 WHERE id=$3 RETURNING *"
-[name,email,avatarData,req.user.id]  
-);
-}
-else {
-   user = await database.query(
-     "UPDATE users SET name = $1, email = LOWER($2), avatar = $3 WHERE id = $4 RETURNING *",
-   [name, email, JSON.stringify(avatarData), req.user.id]
-  );
-   }
+  let user;
+  if (!avatarData) {
+    user = await database.query(
+      "UPDATE users SET name = $1, email = LOWER($2) WHERE id = $3 RETURNING *",
+      [name, email, req.user.id]
+    );
+  } else {
+    user = await database.query(
+      "UPDATE users SET name = $1, email = LOWER($2), avatar = $3 WHERE id = $4 RETURNING *",
+      [name, email, JSON.stringify(avatarData), req.user.id]
+    );
+  }
+
   delete user.rows[0].password;
   res.status(200).json({
     success: true,
     message: "Profile updated successfully.",
     user: user.rows[0],
-  });
-});
-
-export const getAllUsers = catchAsyncErrors(async (req, res, next) => {
-  const result = await database.query(
-    "SELECT id, name, email, role, avatar, created_at FROM users ORDER BY created_at DESC"
-  );
-
-  res.status(200).json({
-    success: true,
-    users: result.rows,
   });
 });
 
