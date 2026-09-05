@@ -3,8 +3,7 @@ import ErrorHandler from "../middlewares/errorMiddleware.js";
 import { v2 as cloudinary } from "cloudinary";
 import database from "../database/db.js";
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import { getAIRecommendation } from "../utils/aigetrecommentation.js";
-
+import { getAIRecommendation } from "..utils/aigetrecommendation.js";
 // Initialize Google GenAI
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
