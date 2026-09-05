@@ -436,6 +436,7 @@ export const fetchAIFilteredProducts = catchAsyncErrors(
     }
 
     const cleanPrompt = userPrompt.trim();
+    const queryLower = cleanPrompt.toLowerCase();
     let filteredProducts = [];
     const query = `
       SELECT p.*, 
@@ -479,7 +480,6 @@ export const fetchAIFilteredProducts = catchAsyncErrors(
         .sort((a, b) => b.similarity - a.similarity);
     }
 
-   
     if (filteredProducts.length === 0) {
       const aiRecommendationResult = await getAIRecommendation(cleanPrompt, allProducts);
       if (aiRecommendationResult && aiRecommendationResult.products.length > 0) {
@@ -488,6 +488,31 @@ export const fetchAIFilteredProducts = catchAsyncErrors(
           similarity: 0.8
         }));
       }
+    }
+
+    if (
+      queryLower.includes("electronic") || 
+      queryLower.includes("phone") || 
+      queryLower.includes("gadget") || 
+      queryLower.includes("laptop") || 
+      queryLower.includes("device")
+    ) {
+      filteredProducts = filteredProducts.filter(p => {
+        const cat = String(p.category || "").toLowerCase();
+        const title = String(p.name || "").toLowerCase();
+        const desc = String(p.description || "").toLowerCase();
+        
+        return (
+          cat.includes("electronic") || 
+          cat.includes("phone") || 
+          cat.includes("gadget") || 
+          cat.includes("laptop") ||
+          title.includes("electronic") ||
+          title.includes("phone") ||
+          title.includes("laptop") ||
+          title.includes("device")
+        );
+      });
     }
     if (filteredProducts.length === 0) {
       const searchTerm = `%${cleanPrompt}%`;
