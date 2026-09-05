@@ -435,6 +435,10 @@ export const fetchAIFilteredProducts = catchAsyncErrors(
     }
 
     const queryVector = await getEmbedding(userPrompt);
+    const cleanPrompt = userPrompt.trim();
+    const searchKeywords = cleanPrompt.split(" ").map(word => `%${word}%`);
+    const searchTerm = `%${cleanPrompt}%`;
+
     const query = `
       SELECT p.*, 
              COALESCE(COUNT(r.id), 0)::integer AS review_count 
@@ -461,15 +465,12 @@ export const fetchAIFilteredProducts = catchAsyncErrors(
       });
 
       filteredProducts = scoredProducts
-        .filter((p) => p.similarity >= 0.58)
+        .filter((p) => p.similarity >= 0.45)
         .sort((a, b) => b.similarity - a.similarity)
         .slice(0, 15);
     }
 
     if (filteredProducts.length === 0) {
-      const searchTerm = `%${userPrompt.trim()}%`;
-      const searchKeywords = userPrompt.trim().split(" ").map(word => `%${word}%`);
-      
       const fallbackQuery = `
         SELECT p.*, 
                0.5 AS similarity,
