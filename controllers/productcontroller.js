@@ -435,30 +435,11 @@ export const fetchAIFilteredProducts = catchAsyncErrors(
     }
 
     const cleanPrompt = userPrompt.trim();
-    const searchKeywords = cleanPrompt.split(" ").map(word => `%${word}%`);
-    const searchTerm = `%cleanPrompt%`;
-
     let filteredProducts = [];
-    const directQuery = `
-      SELECT p.*, 
-             1.0 AS similarity,
-             COALESCE(COUNT(r.id), 0)::integer AS review_count 
-      FROM products p 
-      LEFT JOIN reviews r ON p.id::text = r.product_id::text
-      WHERE (
-        p.name ILIKE $1 
-        OR p.description ILIKE $1 
-        OR p.category ILIKE $1
-        OR p.name ILIKE ANY($2::text[]) 
-        OR p.description ILIKE ANY($2::text[])
-      )
-      GROUP BY p.id;
-    `;
-    const directResult = await database.query(directQuery, [`%${cleanPrompt}%`, searchKeywords]);
-    filteredProducts = directResult.rows;
-    if (filteredProducts.length === 0) {
-      const queryVector = await getEmbedding(cleanPrompt);
-      
+
+    const queryVector = await getEmbedding(cleanPrompt);
+
+    if (queryVector) {
       const query = `
         SELECT p.*, 
                COALESCE(COUNT(r.id), 0)::integer AS review_count 
@@ -467,25 +448,42 @@ export const fetchAIFilteredProducts = catchAsyncErrors(
         WHERE p.embedding IS NOT NULL
         GROUP BY p.id;
       `;
-
       const result = await database.query(query);
 
-      if (queryVector && result.rows.length > 0) {
-        const scoredProducts = result.rows.map((product) => {
-          let prodEmbedding = product.embedding;
-          if (typeof prodEmbedding === 'string') {
-            prodEmbedding = JSON.parse(
-              prodEmbedding.replace('{', '[').replace('}', ']')
-            );
-          }
+      const scoredProducts = result.rows.map((product) => {
+        let prodEmbedding = product.embedding;
+        if (typeof prodEmbedding === 'string') {
+          prodEmbedding = JSON.parse(
+            prodEmbedding.replace('{', '[').replace('}', ']')
+          );
+        }
 
-          const similarity = calculateCosineSimilarity(queryVector, prodEmbedding);
-          return { ...product, similarity };
-        });
-        filteredProducts = scoredProducts
-          .filter((p) => p.similarity >= 0.53)
-          .sort((a, b) => b.similarity - a.similarity);
-      }
+        const similarity = calculateCosineSimilarity(queryVector, prodEmbedding);
+        return { ...product, similarity };
+      });
+
+      filteredProducts = scoredProducts
+        .filter((p) => p.similarity >= 0.49)
+        .sort((a, b) => b.similarity - a.similarity);
+    }
+    if (filteredProducts.length === 0) {
+      const searchKeywords = cleanPrompt.split(" ").map(word => `%${word}%`);
+      const searchTerm = `%${cleanPrompt}%`;
+
+      const fallbackQuery = `
+        SELECT p.*, 
+               0.5 AS similarity,
+               COALESCE(COUNT(r.id), 0)::integer AS review_count 
+        FROM products p 
+        LEFT JOIN reviews r ON p.id::text = r.product_id::text
+        WHERE (
+          p.name ILIKE $1 OR p.description ILIKE $1 OR p.category ILIKE $1
+          OR p.name ILIKE ANY($2::text[]) OR p.description ILIKE ANY($2::text[])
+        )
+        GROUP BY p.id;
+      `;
+      const fallbackResult = await database.query(fallbackQuery, [searchTerm, searchKeywords]);
+      filteredProducts = fallbackResult.rows;
     }
 
     res.status(200).json({
