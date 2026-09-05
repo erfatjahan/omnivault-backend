@@ -9,7 +9,6 @@ export const getAIRecommendation = async (userPrompt, products) => {
 
   const queryLower = userPrompt.toLowerCase().trim();
   const queryWords = queryLower.split(/\s+/).filter(word => word.length > 1);
-  
   const scoredProducts = products.map((p, index) => {
     let score = 0;
     const title = String(p.name || p.title || "").toLowerCase();
@@ -43,6 +42,7 @@ export const getAIRecommendation = async (userPrompt, products) => {
     title: p.name || p.title || "",
     category: p.category || "",
   }));
+
   const systemInstruction = `
 You are an expert e-commerce semantic search engine.
 Your store ONLY has products from the following exact categories:
@@ -56,8 +56,7 @@ Your store ONLY has products from the following exact categories:
 8. Kids & Baby
 
 Your core job is to understand natural language, Banglish (e.g., "bacchader jinish", "valo phone", "kapor"), Bengali, and English.
-- STRICT CATEGORY MATCHING: If the user searches for items related to a specific category (e.g., "electronic", "phone", "gadget"), you must ONLY match and return products belonging to the "Electronics" category (or relevant items). Never mix unrelated categories like Beauty, Fashion, etc., unless explicitly asked.
-- Interpret the user's intent smartly and match it with the correct items from the provided product list.
+- STRICT CATEGORY MATCHING: If the user searches for items related to a specific category (e.g., "electronic", "phone", "gadget", "laptop"), you must ONLY match and return products belonging to the "Electronics" category. Never mix unrelated categories like Beauty, Fashion, Home & Garden, etc.
 - Return ONLY a JSON array of matching product ID strings from the provided list.
 Example format: ["1", "2"]
 If nothing matches, return: []
@@ -66,6 +65,8 @@ If nothing matches, return: []
   const prompt = `User Query: "${userPrompt}"\n\nStore Products: ${JSON.stringify(catalog)}`;
 
   const genAI = new GoogleGenerativeAI(apiKey);
+
+  let matchedProducts = [];
 
   try {
     const model = genAI.getGenerativeModel(
@@ -87,21 +88,28 @@ If nothing matches, return: []
 
     if (Array.isArray(matchedIds) && matchedIds.length > 0) {
       const matchedIdSet = new Set(matchedIds.map(String));
-      const matchedProducts = relevantPool.filter((p, index) => {
+      matchedProducts = relevantPool.filter((p, index) => {
         const currentId = String(p.id ?? p.product_id ?? p._id ?? index);
         return matchedIdSet.has(currentId);
       });
-
-      if (matchedProducts.length > 0) {
-        return { success: true, products: matchedProducts };
-      }
     }
   } catch (err) {
-    console.warn(`AI Search fallback failed:`, err.message);
+    console.warn(`AI Search failed, using keyword fallback:`, err.message);
+  }
+
+  if (queryLower.includes("electronic") || queryLower.includes("phone") || queryLower.includes("gadget")) {
+    matchedProducts = matchedProducts.filter(p => {
+      const cat = String(p.category || "").toLowerCase();
+      return cat.includes("electronic") || cat.includes("phone") || cat.includes("gadget") || cat.includes("device");
+    });
+  }
+
+  if (matchedProducts.length === 0 && relevantPool === products) {
+    return { success: true, products: [] };
   }
 
   return {
     success: true,
-    products: relevantPool.slice(0, 15),
+    products: matchedProducts.length > 0 ? matchedProducts : relevantPool.slice(0, 15),
   };
 };
