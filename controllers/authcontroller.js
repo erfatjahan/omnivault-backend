@@ -183,13 +183,24 @@ export const updatePassword = catchAsyncErrors(async (req, res, next) => {
   if (!currentPassword || !newPassword || !confirmNewPassword) {
     return next(new ErrorHandler("Please provide all required fields.", 400));
   }
+  const userResult = await database.query(
+    "SELECT * FROM users WHERE id = $1",
+    [req.user.id]
+  );
+
+  if (userResult.rows.length === 0) {
+    return next(new ErrorHandler("User not found.", 404));
+  }
+  const user = userResult.rows[0];
   const isPasswordMatch = await bcrypt.compare(
     currentPassword,
-    req.user.password
+    user.password
   );
+
   if (!isPasswordMatch) {
     return next(new ErrorHandler("Current password is incorrect.", 401));
   }
+
   if (newPassword !== confirmNewPassword) {
     return next(new ErrorHandler("New passwords do not match.", 400));
   }
@@ -217,7 +228,6 @@ export const updatePassword = catchAsyncErrors(async (req, res, next) => {
     message: "Password updated successfully.",
   });
 });
-
 export const updateProfile = catchAsyncErrors(async (req, res, next) => {
   const { name, email } = req.body;
   if (!name || !email) {
