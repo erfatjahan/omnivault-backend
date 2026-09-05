@@ -3,6 +3,7 @@ import ErrorHandler from "../middlewares/errorMiddleware.js";
 import { v2 as cloudinary } from "cloudinary";
 import database from "../database/db.js";
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { getAIRecommendation } from "../utils/aigetrecommentation.js";
 
 // Initialize Google GenAI
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
@@ -426,6 +427,7 @@ export const deleteReview = catchAsyncErrors(async (req, res, next) => {
     product: updatedProduct.rows[0],
   });
 });
+
 export const fetchAIFilteredProducts = catchAsyncErrors(
   async (req, res, next) => {
     const { userPrompt } = req.body;
@@ -436,53 +438,70 @@ export const fetchAIFilteredProducts = catchAsyncErrors(
 
     const cleanPrompt = userPrompt.trim();
     let filteredProducts = [];
+    const query = `
+      SELECT p.*, 
+             COALESCE(COUNT(r.id), 0)::integer AS review_count 
+      FROM products p 
+      LEFT JOIN reviews r ON p.id::text = r.product_id::text
+      GROUP BY p.id;
+    `;
+    const result = await database.query(query);
+    const allProducts = result.rows;
 
+    if (allProducts.length === 0) {
+      return res.status(200).json({
+        success: true,
+        message: "No products found.",
+        count: 0,
+        products: [],
+      });
+    }
     const queryVector = await getEmbedding(cleanPrompt);
 
     if (queryVector) {
-      const query = `
-        SELECT p.*, 
-               COALESCE(COUNT(r.id), 0)::integer AS review_count 
-        FROM products p 
-        LEFT JOIN reviews r ON p.id::text = r.product_id::text
-        WHERE p.embedding IS NOT NULL
-        GROUP BY p.id;
-      `;
-      const result = await database.query(query);
-
-      const scoredProducts = result.rows.map((product) => {
+      const scoredProducts = allProducts.map((product) => {
         let prodEmbedding = product.embedding;
         if (typeof prodEmbedding === 'string') {
-          prodEmbedding = JSON.parse(
-            prodEmbedding.replace('{', '[').replace('}', ']')
-          );
+          try {
+            prodEmbedding = JSON.parse(
+              prodEmbedding.replace('{', '[').replace('}', ']')
+            );
+          } catch (e) {
+            prodEmbedding = null;
+          }
         }
 
-        const similarity = calculateCosineSimilarity(queryVector, prodEmbedding);
+        const similarity = prodEmbedding ? calculateCosineSimilarity(queryVector, prodEmbedding) : 0;
         return { ...product, similarity };
       });
 
       filteredProducts = scoredProducts
-        .filter((p) => p.similarity >= 0.52)
+        .filter((p) => p.similarity >= 0.35)
         .sort((a, b) => b.similarity - a.similarity);
     }
-    if (filteredProducts.length === 0) {
-      const searchKeywords = cleanPrompt.split(" ").map(word => `%${word}%`);
-      const searchTerm = `%${cleanPrompt}%`;
 
+   
+    if (filteredProducts.length === 0) {
+      const aiRecommendationResult = await getAIRecommendation(cleanPrompt, allProducts);
+      if (aiRecommendationResult && aiRecommendationResult.products.length > 0) {
+        filteredProducts = aiRecommendationResult.products.map(p => ({
+          ...p,
+          similarity: 0.6
+        }));
+      }
+    }
+    if (filteredProducts.length === 0) {
+      const searchTerm = `%${cleanPrompt}%`;
       const fallbackQuery = `
         SELECT p.*, 
-               0.5 AS similarity,
+               0.4 AS similarity,
                COALESCE(COUNT(r.id), 0)::integer AS review_count 
         FROM products p 
         LEFT JOIN reviews r ON p.id::text = r.product_id::text
-        WHERE (
-          p.name ILIKE $1 OR p.description ILIKE $1 OR p.category ILIKE $1
-          OR p.name ILIKE ANY($2::text[]) OR p.description ILIKE ANY($2::text[])
-        )
+        WHERE p.name ILIKE $1 OR p.description ILIKE $1 OR p.category ILIKE $1
         GROUP BY p.id;
       `;
-      const fallbackResult = await database.query(fallbackQuery, [searchTerm, searchKeywords]);
+      const fallbackResult = await database.query(fallbackQuery, [searchTerm]);
       filteredProducts = fallbackResult.rows;
     }
 

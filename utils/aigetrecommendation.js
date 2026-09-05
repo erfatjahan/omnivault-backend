@@ -1,6 +1,6 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
-export const getAIRecommendation = async (req, res, userPrompt, products) => {
+export const getAIRecommendation = async (userPrompt, products) => {
   const apiKey = process.env.GEMINI_API_KEY;
 
   if (!apiKey || !products || products.length === 0) {
@@ -13,7 +13,7 @@ export const getAIRecommendation = async (req, res, userPrompt, products) => {
   const scoredProducts = products.map((p, index) => {
     let score = 0;
     const title = String(p.name || p.title || "").toLowerCase();
-    const cat = String(p.category?.name || p.category || "").toLowerCase();
+    const cat = String(p.category || "").toLowerCase();
     const desc = String(p.description || "").toLowerCase();
 
     if (title.includes(queryLower)) score += 10;
@@ -41,12 +41,12 @@ export const getAIRecommendation = async (req, res, userPrompt, products) => {
   const catalog = relevantPool.slice(0, 60).map((p, index) => ({
     id: String(p.id ?? p.product_id ?? p._id ?? index),
     title: p.name || p.title || "",
-    category: p.category?.name || p.category || "",
+    category: p.category || "",
   }));
 
   const systemInstruction = `
 You are an expert e-commerce semantic search engine.
-Your core job is to understand natural language, Banglish (e.g., "bacchader jinid", "vlo phone", "kapor"), Bengali, and English.
+Your core job is to understand natural language, Banglish (e.g., "bacchader jinish", "valo phone", "kapor"), Bengali, and English.
 - Interpret the user's intent smartly and match it with the correct items from the provided product list, even if the exact words don't match (e.g., "bacchader" maps to "kids", "toys", etc.).
 - Return ONLY a JSON array of matching product ID strings from the provided list.
 Example format: ["1", "2"]
@@ -87,7 +87,7 @@ If nothing matches, return: []
       }
     }
   } catch (err) {
-    console.warn(`AI Search failed, using smart scored pool:`, err.message);
+    console.warn(`AI Search fallback failed:`, err.message);
   }
 
   return {
