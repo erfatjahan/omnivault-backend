@@ -18,6 +18,20 @@ async function getEmbedding(text) {
   }
 }
 
+// Cosine Similarity calculate korar helper function
+function calculateCosineSimilarity(vecA, vecB) {
+  let dotProduct = 0;
+  let normA = 0;
+  let normB = 0;
+  for (let i = 0; i < vecA.length; i++) {
+    dotProduct += vecA[i] * vecB[i];
+    normA += vecA[i] * vecA[i];
+    normB += vecB[i] * vecB[i];
+  }
+  if (normA === 0 || normB === 0) return 0;
+  return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
+}
+
 export const createProduct = catchAsyncErrors(async (req, res, next) => {
   const { name, description, price, category, stock } = req.body;
   const created_by = req.user?.id;
@@ -414,77 +428,49 @@ export const deleteReview = catchAsyncErrors(async (req, res, next) => {
     product: updatedProduct.rows[0],
   });
 });
-
-// 8. AI Semantic Search (Neon PostgreSQL pgvector powered with Similarity Filter)
-// export const fetchAIFilteredProducts = catchAsyncErrors(
-//   async (req, res, next) => {
-//     const { userPrompt } = req.body;
-
-//     if (!userPrompt || !userPrompt.trim()) {
-//       return next(new ErrorHandler("Provide a valid prompt.", 400));
-//     }
-//     const queryVector = await getEmbedding(userPrompt);
-
-//     if (!queryVector) {
-//       return next(new ErrorHandler("Failed to process AI search query.", 500));
-//     }
-
-//     const vectorString = `[${queryVector.join(",")}]`;
-    
-//     // Added HAVING clause to filter out irrelevant products (threshold >= 0.3)
-//     const query = `
-//       SELECT p.*, 
-//              1 - (p.embedding <=> $1::vector) AS similarity,
-//              COALESCE(COUNT(r.id), 0)::integer AS review_count 
-//       FROM products p 
-//       LEFT JOIN reviews r ON p.id::text = r.product_id::text
-//       WHERE p.embedding IS NOT NULL
-//       GROUP BY p.id
-//       HAVING (1 - (p.embedding <=> $1::vector)) >= 0.25
-//       ORDER BY similarity DESC
-//       LIMIT 15;
-//     `;
-
-//     const result = await database.query(query, [vectorString]);
-
-//     res.status(200).json({
-//       success: true,
-//       message: "AI filtered products fetched successfully.",
-//       count: result.rows.length,
-//       products: result.rows,
-//     });
-//   }
-// );
-// 8. AI Semantic Search (Neon PostgreSQL pgvector powered with Similarity Filter)
 export const fetchAIFilteredProducts = catchAsyncErrors(
   async (req, res, next) => {
     const { userPrompt } = req.body;
+
     if (!userPrompt || !userPrompt.trim()) {
       return next(new ErrorHandler("Provide a valid prompt.", 400));
     }
+
     const queryVector = await getEmbedding(userPrompt);
     if (!queryVector) {
       return next(new ErrorHandler("Failed to process AI search query.", 500));
     }
-    const vectorString = `[${queryVector.join(",")}]`;
     const query = `
       SELECT p.*, 
-             1 - (p.embedding <=> $1::vector) AS similarity,
              COALESCE(COUNT(r.id), 0)::integer AS review_count 
       FROM products p 
       LEFT JOIN reviews r ON p.id::text = r.product_id::text
       WHERE p.embedding IS NOT NULL
-      GROUP BY p.id
-      HAVING (1 - (p.embedding <=> $1::vector)) >= 0.45
-      ORDER BY similarity DESC
-      LIMIT 15;
+      GROUP BY p.id;
     `;
-    const result = await database.query(query, [vectorString]);
+
+    const result = await database.query(query);
+    const scoredProducts = result.rows.map((product) => {
+      let prodEmbedding = product.embedding;
+      if (typeof prodEmbedding === 'string') {
+        prodEmbedding = JSON.parse(
+          prodEmbedding.replace('{', '[').replace('}', ']')
+        );
+      }
+
+      const similarity = calculateCosineSimilarity(queryVector, prodEmbedding);
+      return { ...product, similarity };
+    });
+    const filteredProducts = scoredProducts
+      .filter((p) => p.similarity >= 0.55)
+      .sort((a, b) => b.similarity - a.similarity)
+      .slice(0, 15);
+
     res.status(200).json({
       success: true,
       message: "AI filtered products fetched successfully.",
-      count: result.rows.length,
-      products: result.rows,
+      count: filteredProducts.length,
+      products: filteredProducts,
     });
   }
 );
