@@ -475,7 +475,7 @@ export const fetchAIFilteredProducts = catchAsyncErrors(
       });
 
       filteredProducts = scoredProducts
-        .filter((p) => p.similarity >= 0.35)
+        .filter((p) => p.similarity >= 0.50)
         .sort((a, b) => b.similarity - a.similarity);
     }
 
@@ -485,7 +485,7 @@ export const fetchAIFilteredProducts = catchAsyncErrors(
       if (aiRecommendationResult && aiRecommendationResult.products.length > 0) {
         filteredProducts = aiRecommendationResult.products.map(p => ({
           ...p,
-          similarity: 0.6
+          similarity: 0.8
         }));
       }
     }
