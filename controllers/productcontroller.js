@@ -434,14 +434,12 @@ export const fetchAIFilteredProducts = catchAsyncErrors(
       return next(new ErrorHandler("Provide a valid prompt.", 400));
     }
 
-    const cleanPrompt = userPrompt.trim().toLowerCase();
-    
-    const searchWords = cleanPrompt.split(" ").filter(word => word.length > 1);
-    const searchTerm = `%${cleanPrompt}%`;
+    const cleanPrompt = userPrompt.trim();
+    const searchKeywords = cleanPrompt.split(" ").map(word => `%${word}%`);
+    const searchTerm = `%cleanPrompt%`;
 
     let filteredProducts = [];
-
-    let directQuery = `
+    const directQuery = `
       SELECT p.*, 
              1.0 AS similarity,
              COALESCE(COUNT(r.id), 0)::integer AS review_count 
@@ -451,26 +449,13 @@ export const fetchAIFilteredProducts = catchAsyncErrors(
         p.name ILIKE $1 
         OR p.description ILIKE $1 
         OR p.category ILIKE $1
+        OR p.name ILIKE ANY($2::text[]) 
+        OR p.description ILIKE ANY($2::text[])
+      )
+      GROUP BY p.id;
     `;
-
-    const queryParams = [searchTerm];
-
-    if (searchWords.length > 0) {
-      searchWords.forEach((word, index) => {
-        const paramIdx1 = queryParams.length + 1;
-        const paramIdx2 = queryParams.length + 2;
-        const paramIdx3 = queryParams.length + 3;
-        
-        directQuery += ` OR p.name ILIKE $${paramIdx1} OR p.description ILIKE $${paramIdx2} OR p.category ILIKE $${paramIdx3}`;
-        queryParams.push(`%${word}%`, `%${word}%`, `%${word}%`);
-      });
-    }
-
-    directQuery += `) GROUP BY p.id;`;
-    
-    const directResult = await database.query(directQuery, queryParams);
+    const directResult = await database.query(directQuery, [`%${cleanPrompt}%`, searchKeywords]);
     filteredProducts = directResult.rows;
-
     if (filteredProducts.length === 0) {
       const queryVector = await getEmbedding(cleanPrompt);
       
@@ -497,9 +482,8 @@ export const fetchAIFilteredProducts = catchAsyncErrors(
           const similarity = calculateCosineSimilarity(queryVector, prodEmbedding);
           return { ...product, similarity };
         });
-
         filteredProducts = scoredProducts
-          .filter((p) => p.similarity >= 0.35)
+          .filter((p) => p.similarity >= 0.53)
           .sort((a, b) => b.similarity - a.similarity);
       }
     }
