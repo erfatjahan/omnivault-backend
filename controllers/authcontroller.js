@@ -179,10 +179,7 @@ export const resetPassword = catchAsyncErrors(async (req, res, next) => {
 });
 
 export const updatePassword = catchAsyncErrors(async (req, res, next) => {
-  const { currentPassword, newPassword, confirmNewPassword } = req.body;
-  if (!currentPassword || !newPassword || !confirmNewPassword) {
-    return next(new ErrorHandler("Please provide all required fields.", 400));
-  }
+  const { currentPassword, newPassword, confirmNewPassword, otp } = req.body;
   const userResult = await database.query(
     "SELECT * FROM users WHERE id = $1",
     [req.user.id]
@@ -192,40 +189,64 @@ export const updatePassword = catchAsyncErrors(async (req, res, next) => {
     return next(new ErrorHandler("User not found.", 404));
   }
   const user = userResult.rows[0];
-  const isPasswordMatch = await bcrypt.compare(
-    currentPassword,
-    user.password
-  );
+  if (!otp) {
+    if (!currentPassword || !newPassword || !confirmNewPassword) {
+      return next(new ErrorHandler("Please provide all required fields.", 400));
+    }
 
-  if (!isPasswordMatch) {
-    return next(new ErrorHandler("Current password is incorrect.", 401));
-  }
+    const isPasswordMatch = await bcrypt.compare(currentPassword, user.password);
+    if (!isPasswordMatch) {
+      return next(new ErrorHandler("Current password is incorrect.", 401));
+    }
 
-  if (newPassword !== confirmNewPassword) {
-    return next(new ErrorHandler("New passwords do not match.", 400));
-  }
+    if (newPassword !== confirmNewPassword) {
+      return next(new ErrorHandler("New passwords do not match.", 400));
+    }
 
-  if (
-    newPassword.length < 8 ||
-    newPassword.length > 16 ||
-    confirmNewPassword.length < 8 ||
-    confirmNewPassword.length > 16
-  ) {
-    return next(
-      new ErrorHandler("Password must be between 8 and 16 characters.", 400)
+    if (newPassword.length < 8 || newPassword.length > 16) {
+      return next(new ErrorHandler("Password must be between 8 and 16 characters.", 400));
+    }
+
+    const generatedOtp = Math.floor(100000 + Math.random() * 900000).toString();
+    const otpExpire = new Date(Date.now() + 10 * 60 * 1000); 
+
+    await database.query(
+      "UPDATE users SET otp = $1, otp_expire = $2 WHERE id = $3",
+      [generatedOtp, otpExpire, req.user.id]
     );
+    const message = `Your OTP for changing password is: ${generatedOtp}. It is valid for 10 minutes.`;
+    try {
+      await sendEmail({
+        email: user.email,
+        subject: "Password Change OTP Verification",
+        message,
+      });
+      return res.status(200).json({
+        success: true,
+        message: `OTP sent to your registered email ${user.email} successfully. Please verify to update password.`,
+      });
+    } catch (error) {
+      return next(new ErrorHandler("Email could not be sent. Try again later.", 500));
+    }
+  }
+  if (
+    !user.otp ||
+    user.otp !== otp ||
+    new Date(user.otp_expire) < new Date()
+  ) {
+    return next(new ErrorHandler("Invalid or expired OTP.", 400));
   }
 
   const hashedPassword = await bcrypt.hash(newPassword, 10);
 
-  await database.query("UPDATE users SET password = $1 WHERE id = $2", [
-    hashedPassword,
-    req.user.id,
-  ]);
+  await database.query(
+    "UPDATE users SET password = $1, otp = NULL, otp_expire = NULL WHERE id = $2",
+    [hashedPassword, req.user.id]
+  );
 
   res.status(200).json({
     success: true,
-    message: "Password updated successfully.",
+    message: "Password updated successfully with 2FA verification.",
   });
 });
 export const updateProfile = catchAsyncErrors(async (req, res, next) => {
