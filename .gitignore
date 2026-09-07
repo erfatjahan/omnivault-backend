@@ -1,5 +1,6 @@
 node_modules
-.env
+# config.env
+s_erver/config/config.env
 .DS_Store
 dist
 npm-debug.log*
