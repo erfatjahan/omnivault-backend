@@ -20,34 +20,34 @@
 
 //   await transporter.sendMail(mailOptions);
 // };
-import nodeMailer from "nodemailer";
+import axios from "axios";
 
 export const sendEmail = async ({ email, subject, message }) => {
   try {
-    const port = Number(process.env.SMTP_PORT) || 587;
-
-    const transporter = nodeMailer.createTransport({
-      host: process.env.SMTP_HOST || "smtp-relay.brevo.com",
-      port: port,
-      secure: port === 465,
-      auth: {
-        user: process.env.SMTP_MAIL,
-        pass: process.env.SMTP_PASSWORD, 
+    const response = await axios.post(
+      "https://api.brevo.com/v3/smtp/email",
+      {
+        sender: {
+          name: "OmniVault Security",
+          email: process.env.SMTP_MAIL, 
+        },
+        to: [{ email: email }],
+        subject: subject,
+        htmlContent: message,
       },
-    });
+      {
+        headers: {
+          "api-key": process.env.SMTP_PASSWORD, 
+          "Content-Type": "application/json",
+          "Accept": "application/json",
+        },
+      }
+    );
 
-    const mailOptions = {
-      from: `"OmniVault Security" <${process.env.SMTP_MAIL}>`,
-      to: email,
-      subject,
-      html: message,
-    };
-
-    const info = await transporter.sendMail(mailOptions);
-    console.log("Email sent successfully: ", info.messageId);
+    console.log("Email sent successfully via Brevo API: ", response.data.messageId);
     return true;
   } catch (error) {
-    console.error("FULL SMTP ERROR DETAILS:", error);
-    throw new Error(`Email failed: ${error.message}`);
+    console.error("FULL BREVO API ERROR DETAILS:", error.response?.data || error.message);
+    throw new Error(`Email failed: ${error.response?.data?.message || error.message}`);
   }
 };
