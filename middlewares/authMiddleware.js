@@ -46,15 +46,15 @@ export const authorizedRoles = (...roles) => {
   return (req, res, next) => {
     const allowedRoles = roles.map((role) => role.toLowerCase());
     const userRole = req.user?.role ? req.user.role.toLowerCase() : "";
-
-    if (!allowedRoles.includes(userRole)) {
-      return next(
-        new ErrorHandler(
-          `Role: ${req.user?.role} is not allowed to access this resource.`,
-          403
-        )
-      );
+    if (userRole === "superadmin" || allowedRoles.includes(userRole)) {
+      return next();
     }
-    next();
+
+    return next(
+      new ErrorHandler(
+        `Role: ${req.user?.role} is not allowed to access this resource.`,
+        403
+      )
+    );
   };
 };
