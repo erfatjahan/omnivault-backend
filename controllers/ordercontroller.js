@@ -2,6 +2,7 @@ import ErrorHandler from "../middlewares/errorMiddleware.js";
 import { catchAsyncErrors } from "../middlewares/catchAsyncError.js";
 import database from "../database/db.js";
 import { generatePaymentIntent } from "../utils/generatepayment.js";
+import crypto from "crypto";
 
 export const placeNewOrder = catchAsyncErrors(async (req, res, next) => {
   const rawShipping = req.body.shipping_info || req.body.shippingInfo || {};
@@ -205,6 +206,180 @@ export const placeNewOrder = catchAsyncErrors(async (req, res, next) => {
   }
 });
 
+export const createPayForMeRequest = catchAsyncErrors(async (req, res, next) => {
+  const rawShipping = req.body.shipping_info || req.body.shippingInfo || {};
+
+  const full_name = (req.body.full_name || rawShipping.full_name || rawShipping.fullName || "").trim();
+  const phone = (req.body.phone || rawShipping.phone || "").trim();
+  const address = (req.body.address || rawShipping.address || "").trim();
+  const city = (req.body.city || rawShipping.city || "").trim();
+  const country = (req.body.country || rawShipping.country || "Bangladesh").trim();
+  const pincode = (req.body.pincode || rawShipping.pincode || rawShipping.postal_code || "").trim();
+  const state = (req.body.state || rawShipping.state || city || "Bangladesh").trim();
+
+  const { orderedItems, payment_type = "SSLCommerz", payment_method = "SSLCommerz" } = req.body;
+
+  if (!full_name || !phone || !address || !city || !pincode) {
+    return next(new ErrorHandler("Please provide complete shipping details.", 400));
+  }
+
+  const items = Array.isArray(orderedItems) ? orderedItems : JSON.parse(orderedItems || "[]");
+
+  if (!items || items.length === 0) {
+    return next(new ErrorHandler("No items in cart.", 400));
+  }
+
+  const productIds = items
+    .map((item) => item.product?.id || item.product?._id || item.productId || item.product_id || item.id)
+    .filter(Boolean);
+
+  if (productIds.length === 0) {
+    return next(new ErrorHandler("Invalid product information.", 400));
+  }
+
+  const { rows: products } = await database.query(
+    `SELECT id, price, stock, name, images FROM products WHERE id::text = ANY($1::text[])`,
+    [productIds.map(String)]
+  );
+
+  let rawSubtotal = 0;
+  const processedItems = [];
+
+  for (const item of items) {
+    const pId = item.product?.id || item.product?._id || item.productId || item.product_id || item.id;
+    const product = products.find((p) => String(p.id) === String(pId));
+
+    if (!product) {
+      return next(new ErrorHandler(`Product not found for ID: ${pId}`, 404));
+    }
+
+    const itemQty = Number(item.quantity || item.qty || 1);
+
+    if (itemQty > product.stock) {
+      return next(new ErrorHandler(`Only ${product.stock} units available for "${product.name}".`, 400));
+    }
+
+    rawSubtotal += Number(product.price) * itemQty;
+
+    let itemImage = "";
+    if (item.image) {
+      itemImage = typeof item.image === "string" ? item.image : item.image?.url || "";
+    } else if (product.images && product.images.length > 0) {
+      itemImage = typeof product.images[0] === "string" ? product.images[0] : product.images[0]?.url || "";
+    }
+
+    processedItems.push({
+      productId: product.id,
+      name: product.name,
+      price: Number(product.price),
+      quantity: itemQty,
+      image: itemImage,
+    });
+  }
+
+  const tax_price = Number((rawSubtotal * 0.05).toFixed(2));
+  const shipping_price = rawSubtotal >= 1500 ? 0.0 : 60.0;
+  const total_price = Number((rawSubtotal + tax_price + shipping_price).toFixed(2));
+
+  const paymentToken = crypto.randomBytes(20).toString("hex");
+
+  const client = await database.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    const orderResult = await client.query(
+      `INSERT INTO orders (
+        buyer_id, total_price, tax_price, shipping_price, order_status, payment_status, payment_method, is_pay_for_me, payment_link_token
+      ) VALUES ($1, $2, $3, $4, 'Pending', 'Unpaid', $5, TRUE, $6) RETURNING *`,
+      [req.user.id, total_price, tax_price, shipping_price, payment_method, paymentToken]
+    );
+
+    const orderId = orderResult.rows[0].id;
+
+    for (const pItem of processedItems) {
+      await client.query(
+        `INSERT INTO order_items (order_id, product_id, quantity, price, image, title)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [orderId, pItem.productId, pItem.quantity, pItem.price, pItem.image, pItem.name]
+      );
+
+      await client.query(
+        `UPDATE products SET stock = stock - $1 WHERE id::text = $2::text`,
+        [pItem.quantity, pItem.productId]
+      );
+    }
+
+    await client.query(
+      `INSERT INTO shipping_info (
+        order_id, full_name, state, city, country, address, pincode, phone
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [orderId, full_name, state, city, country, address, pincode, phone]
+    );
+
+    await client.query("COMMIT");
+    client.release();
+
+    const frontendUrl = process.env.FRONTEND_URL || "http://localhost:5173";
+    const payForMeUrl = `${frontendUrl}/pay-for-me/${paymentToken}`;
+
+    res.status(201).json({
+      success: true,
+      message: "Pay-For-Me link generated successfully!",
+      paymentUrl: payForMeUrl,
+      orderId,
+    });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    client.release();
+    return next(new ErrorHandler(error.message || "Failed to generate pay-for-me link.", 500));
+  }
+});
+
+export const getOrderByPaymentToken = catchAsyncErrors(async (req, res, next) => {
+  const { token } = req.params;
+
+  const result = await database.query(
+    `
+    SELECT 
+      o.id,
+      o.total_price,
+      o.payment_status,
+      o.payment_method,
+      o.created_at,
+      COALESCE(
+        (
+          SELECT json_agg(
+            json_build_object(
+              'id', oi.id,
+              'product_id', oi.product_id,
+              'title', oi.title,
+              'image', oi.image,
+              'quantity', oi.quantity,
+              'price', oi.price
+            )
+          )
+          FROM order_items oi
+          WHERE oi.order_id::text = o.id::text
+        ), '[]'::json
+      ) AS order_items
+    FROM orders o
+    WHERE o.payment_link_token = $1 AND o.is_pay_for_me = TRUE
+    `,
+    [token]
+  );
+
+  if (result.rows.length === 0) {
+    return next(new ErrorHandler("Invalid or expired payment link.", 404));
+  }
+
+  res.status(200).json({
+    success: true,
+    message: "Order details fetched successfully for payment.",
+    order: result.rows[0],
+  });
+});
+
 export const fetchSingleOrder = catchAsyncErrors(async (req, res, next) => {
   const { orderId } = req.params;
   const result = await database.query(
@@ -224,8 +399,6 @@ export const fetchSingleOrder = catchAsyncErrors(async (req, res, next) => {
               'created_at', oi.created_at
             )
           )
-          FROM order_items oi
-          WHERE oi.order_id::text = o.id::text
         ), '[]'::json
       ) AS order_items,
       (
@@ -276,8 +449,6 @@ export const fetchMyOrders = catchAsyncErrors(async (req, res, next) => {
               'created_at', oi.created_at
             )
           )
-          FROM order_items oi
-          WHERE oi.order_id::text = o.id::text
         ), '[]'::json
       ) AS order_items,
       (
@@ -344,8 +515,6 @@ export const fetchAllOrders = catchAsyncErrors(async (req, res, next) => {
               'created_at', oi.created_at
             )
           )
-          FROM order_items oi
-          WHERE oi.order_id::text = o.id::text
         ), '[]'::json
       ) AS order_items, 
       (
