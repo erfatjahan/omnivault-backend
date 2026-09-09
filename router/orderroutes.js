@@ -7,6 +7,8 @@ import {
   updateOrderStatus,
   deleteOrder,
   cancelMyOrder,
+  createPayForMeRequest,
+  getOrderByPaymentToken,
 } from "../controllers/ordercontroller.js";
 import {
   isAuthenticated,
@@ -14,6 +16,9 @@ import {
 } from "../middlewares/authMiddleware.js";
 
 const router = express.Router();
+
+router.post("/pay-for-me/create", isAuthenticated, createPayForMeRequest);
+router.get("/pay-for-me/:token", getOrderByPaymentToken); 
 
 // User Order Routes
 router.post("/new", isAuthenticated, placeNewOrder);
