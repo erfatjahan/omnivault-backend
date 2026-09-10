@@ -9,7 +9,7 @@ import {
   cancelMyOrder,
   createPayForMeRequest,
   getOrderByPaymentToken,
-  processPayForMePayment,
+  
 } from "../controllers/ordercontroller.js";
 import {
   isAuthenticated,
@@ -20,7 +20,7 @@ const router = express.Router();
 
 router.post("/pay-for-me/create", isAuthenticated, createPayForMeRequest);
 router.get("/pay-for-me/:token", getOrderByPaymentToken); 
-router.post("/pay-for-me/pay/:token", processPayForMePayment);
+
 // User Order Routes
 router.post("/new", isAuthenticated, placeNewOrder);
 router.get("/my-orders", isAuthenticated, fetchMyOrders);
