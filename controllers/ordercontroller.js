@@ -320,9 +320,9 @@ export const createPayForMeRequest = catchAsyncErrors(async (req, res, next) => 
     await client.query("COMMIT");
     client.release();
 
-    const frontendUrl = process.env.FRONTEND_URL || "http://localhost:5173";
-    const payForMeUrl = `${frontendUrl}/pay-for-me/${paymentToken}`;
-
+    const frontendUrl = process.env.FRONTEND_URL || "https://omnivault-frontend-8o84ffcbo-erfatjahan.vercel.app";
+    const cleanFrontendUrl = frontendUrl.replace(/\/+$/, "");
+    const payForMeUrl = `${cleanFrontendUrl}/pay-for-me/${paymentToken}`;
     res.status(201).json({
       success: true,
       message: "Pay-For-Me link generated successfully!",
