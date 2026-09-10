@@ -323,6 +323,7 @@ export const createPayForMeRequest = catchAsyncErrors(async (req, res, next) => 
     const frontendUrl = process.env.FRONTEND_URL || "https://omnivault-frontend-8o84ffcbo-erfatjahan.vercel.app";
     const cleanFrontendUrl = frontendUrl.replace(/\/+$/, "");
     const payForMeUrl = `${cleanFrontendUrl}/pay-for-me/${paymentToken}`;
+
     res.status(201).json({
       success: true,
       message: "Pay-For-Me link generated successfully!",
@@ -399,6 +400,8 @@ export const fetchSingleOrder = catchAsyncErrors(async (req, res, next) => {
               'created_at', oi.created_at
             )
           )
+          FROM order_items oi
+          WHERE oi.order_id::text = o.id::text
         ), '[]'::json
       ) AS order_items,
       (
@@ -449,6 +452,8 @@ export const fetchMyOrders = catchAsyncErrors(async (req, res, next) => {
               'created_at', oi.created_at
             )
           )
+          FROM order_items oi
+          WHERE oi.order_id::text = o.id::text
         ), '[]'::json
       ) AS order_items,
       (
@@ -515,6 +520,8 @@ export const fetchAllOrders = catchAsyncErrors(async (req, res, next) => {
               'created_at', oi.created_at
             )
           )
+          FROM order_items oi
+          WHERE oi.order_id::text = o.id::text
         ), '[]'::json
       ) AS order_items, 
       (
