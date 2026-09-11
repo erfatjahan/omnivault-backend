@@ -421,6 +421,53 @@ export const payForPayForMeOrder = catchAsyncErrors(async (req, res, next) => {
   });
 });
 
+export const fetchSingleOrder = catchAsyncErrors(async (req, res, next) => {
+  const { orderId } = req.params;
+  const result = await database.query(
+    `
+    SELECT 
+      o.*, 
+      COALESCE(
+        (
+          SELECT json_agg(
+            json_build_order(
+              'id', oi.id,
+              'product_id', oi.product_id,
+              'title', oi.title,
+              'image', oi.image,
+              'quantity', oi.quantity,
+              'price', oi.price,
+              'created_at', oi.created_at
+            )
+          )
+          FROM order_items oi
+          WHERE oi.order_id::text = o.id::text
+        ), '[]'::json
+      ) AS order_items,
+      (
+        SELECT to_json(s.*)
+        FROM shipping_info s
+        WHERE s.order_id::text = o.id::text
+        ORDER BY s.id DESC
+        LIMIT 1
+      ) AS shipping_info
+    FROM orders o
+    WHERE o.id::text = $1::text
+    `,
+    [orderId]
+  );
+
+  if (result.rows.length === 0) {
+    return next(new ErrorHandler("Order not found.", 404));
+  }
+
+  res.status(200).json({
+    success: true,
+    message: "Order fetched successfully.",
+    order: result.rows[0],
+  });
+});
+
 export const fetchMyOrders = catchAsyncErrors(async (req, res, next) => {
   const userId = req.user?.id || req.user?._id;
 
