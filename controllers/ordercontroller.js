@@ -381,6 +381,40 @@ export const getOrderByPaymentToken = catchAsyncErrors(async (req, res, next) =>
   });
 });
 
+export const payForPayForMeOrder = catchAsyncErrors(async (req, res, next) => {
+  const { token } = req.params;
+
+  const result = await database.query(
+    `SELECT * FROM orders WHERE payment_link_token = $1 AND is_pay_for_me = TRUE`,
+    [token]
+  );
+
+  if (result.rows.length === 0) {
+    return next(new ErrorHandler("Invalid or expired payment link.", 404));
+  }
+
+  const order = result.rows[0];
+
+  if (order.payment_status === "Paid") {
+    return next(new ErrorHandler("This order has already been paid.", 400));
+  }
+
+  let paymentResponse = { success: true, paymentUrl: "" };
+  if (typeof generatePaymentIntent === "function") {
+    paymentResponse = await generatePaymentIntent(
+      order.id,
+      order.total_price,
+      order.payment_method || "SSLCommerz"
+    );
+  }
+
+  res.status(200).json({
+    success: true,
+    message: "Redirecting to payment gateway...",
+    paymentUrl: paymentResponse.paymentUrl || paymentResponse.clientSecret || "",
+  });
+});
+
 export const fetchSingleOrder = catchAsyncErrors(async (req, res, next) => {
   const { orderId } = req.params;
   const result = await database.query(
