@@ -183,7 +183,7 @@ export const placeNewOrder = catchAsyncErrors(async (req, res, next) => {
       });
     }
 
-    let paymentResponse = { success: true, clientSecret: "" };
+    let paymentResponse = { success: true, paymentUrl: "" };
     if (typeof generatePaymentIntent === "function") {
       paymentResponse = await generatePaymentIntent(
         orderId,
@@ -192,12 +192,11 @@ export const placeNewOrder = catchAsyncErrors(async (req, res, next) => {
       );
     }
 
-    res.status(201).json({
+   res.status(201).json({
       success: true,
       message: `Order placed successfully. Proceeding to ${sanitizedPaymentType} payment.`,
       orderId,
-      paymentUrl:
-        paymentResponse.paymentUrl || paymentResponse.clientSecret || "",
+      paymentUrl: paymentResponse.paymentUrl || "",
       payment_type: sanitizedPaymentType,
       total_price,
     });
