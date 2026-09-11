@@ -64,7 +64,7 @@ export const initSSLPayment = async (req, res, next) => {
 export const sslSuccess = async (req, res, next) => {
   try {
     const tran_id = req.query.tran_id || req.body.tran_id;
-    const order_id = req.query.order_id || req.body.value_a;
+    const order_id = req.query.order_id || req.body.order_id || req.body.value_a;
 
     const clientUrl = process.env.FRONTEND_URL || process.env.CLIENT_URL || "https://omnivault-frontend-one.vercel.app";
 
@@ -91,7 +91,7 @@ export const sslSuccess = async (req, res, next) => {
 
 export const sslFail = async (req, res, next) => {
   try {
-    const order_id = req.query.order_id || req.body.value_a;
+    const order_id = req.query.order_id || req.body.order_id || req.body.value_a;
     const clientUrl = process.env.FRONTEND_URL || process.env.CLIENT_URL || "https://omnivault-frontend-one.vercel.app";
 
     if (order_id) {
@@ -113,7 +113,7 @@ export const sslFail = async (req, res, next) => {
 
 export const sslCancel = async (req, res, next) => {
   try {
-    const order_id = req.query.order_id || req.body.value_a;
+    const order_id = req.query.order_id || req.body.order_id || req.body.value_a;
     const clientUrl = process.env.FRONTEND_URL || process.env.CLIENT_URL || "https://omnivault-frontend-one.vercel.app";
 
     if (order_id) {
