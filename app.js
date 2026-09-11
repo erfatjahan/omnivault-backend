@@ -1,134 +1,102 @@
-import { config } from "dotenv";
-config({ path: "./config/config.env" });
-config();
+import React, { useEffect } from "react";
+import { BrowserRouter, Routes, Route, useLocation } from "react-router-dom";
+import { useDispatch, useSelector } from "react-redux";
+import { ThemeProvider } from "./contexts/ThemeContext";
+import { ToastContainer } from "react-toastify";
 
-import express from "express";
-import cors from "cors";
-import cookieParser from "cookie-parser";
-import fileUpload from "express-fileupload";
-import { createTables } from "./utils/createTables.js";
-import { errorMiddleware } from "./middlewares/errorMiddleware.js";
-import authRouter from "./router/authroutes.js";
-import productRouter from "./router/productroutes.js";
-import adminRouter from "./router/adminroutes.js";
-import orderRouter from "./router/orderroutes.js";
-import paymentRoutes from "./router/paymentRoutes.js";
-import Stripe from "stripe";
-import database from "./database/db.js";
+// Layout Components
+import Navbar from "./components/Layout/Navbar";
+import Sidebar from "./components/Layout/Sidebar";
+import SearchOverlay from "./components/Layout/SearchOverlay";
+import CartSidebar from "./components/Layout/CartSidebar";
+import ProfilePanel from "./components/Layout/ProfilePanel";
+import LoginModal from "./components/Layout/LoginModal";
+import Footer from "./components/Layout/Footer";
 
-const app = express();
+// Pages
+import Index from "./pages/Home";
+import Products from "./pages/Products";
+import ProductDetail from "./pages/ProductDetail";
+import Cart from "./pages/Cart";
+import Orders from "./pages/Orders";
+import Payment from "./pages/Payment";
+import About from "./pages/About";
+import FAQ from "./pages/FAQ";
+import Contact from "./pages/Contact";
+import PayForMe from "./pages/PayForMe";
+import NotFound from "./pages/NotFound";
 
-const allowedOrigins = [
-  "http://localhost:5173",
-  "http://localhost:5174",
-  "http://localhost:3000",
-  "https://omnivault-dashboard.vercel.app",
-  "https://omnivault-frontend-one.vercel.app",
-  "https://sandbox.sslcommerz.com",
-  "https://securepay.sslcommerz.com",
-  process.env.FRONTEND_URL,
-  process.env.DASHBOARD_URL,
-  process.env.CLIENT_URL,
-].filter(Boolean);
+// Redux Actions
+import { getuser } from "./store/slices/authSlice";
+import { fetchAllProducts } from "./store/slices/productSlice";
 
-app.use(
-  cors({
-    origin: function (origin, callback) {
-      if (!origin) return callback(null, true);
+// Main App Layout Component to use useLocation hook safely inside BrowserRouter
+const MainLayout = () => {
+  const dispatch = useDispatch();
+  const location = useLocation();
+  const { authUser, isCheckingAuth } = useSelector((state) => state.auth);
 
-      const isAllowed =
-        allowedOrigins.includes(origin) ||
-        origin.endsWith(".sslcommerz.com") ||
-        origin.endsWith(".vercel.app");
+  useEffect(() => {
+    dispatch(getuser());
+    dispatch(fetchAllProducts());
+  }, [dispatch]);
 
-      if (isAllowed) {
-        return callback(null, true);
-      } else {
-        return callback(null, false); 
-      }
-    },
-    methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-    credentials: true,
-    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
-  })
-);
+  // Check if current route is a Pay-For-Me page
+  const isPayForMeRoute = location.pathname.startsWith("/pay-for-me");
 
-// app.options("(.*)", cors());
-app.get("/health", (req, res) => {
-  res.status(200).send("OK");
-});
-
-app.post(
-  "/api/v1/payment/webhook",
-  express.raw({ type: "application/json" }),
-  async (req, res) => {
-    const sig = req.headers["stripe-signature"];
-    let event;
-    try {
-      event = Stripe.webhooks.constructEvent(
-        req.body,
-        sig,
-        process.env.STRIPE_WEBHOOK_SECRET
-      );
-    } catch (error) {
-      return res.status(400).send(`Webhook Error: ${error.message || error}`);
-    }
-
-    if (event.type === "payment_intent.succeeded") {
-      const paymentIntent_client_secret = event.data.object.client_secret;
-      try {
-        const updatedPaymentStatus = "Paid";
-        const paymentTableUpdateResult = await database.query(
-          `UPDATE payments SET payment_status = $1 WHERE payment_intent_id = $2 RETURNING *`,
-          [updatedPaymentStatus, paymentIntent_client_secret]
-        );
-        await database.query(
-          `UPDATE orders SET paid_at = NOW() WHERE id = $1 RETURNING *`,
-          [paymentTableUpdateResult.rows[0].order_id]
-        );
-
-        const orderId = paymentTableUpdateResult.rows[0].order_id;
-
-        const { rows: orderedItems } = await database.query(
-          `SELECT product_id, quantity FROM order_items WHERE order_id = $1`,
-          [orderId]
-        );
-
-        for (const item of orderedItems) {
-          await database.query(
-            `UPDATE products SET stock = stock - $1 WHERE id = $2`,
-            [item.quantity, item.product_id]
-          );
-        }
-      } catch (error) {
-        return res
-          .status(500)
-          .send(`Error updating paid_at timestamp in orders table.`);
-      }
-    }
-    res.status(200).send({ received: true });
+  if (isCheckingAuth && !authUser && !isPayForMeRoute) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-[#120b0e]">
+        <div className="w-10 h-10 border-4 border-[#9c5b6f]/30 border-t-[#9c5b6f] rounded-full animate-spin" />
+      </div>
+    );
   }
-);
 
-app.use(cookieParser());
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+  return (
+    <div className="min-h-screen bg-white dark:bg-[#120b0e] text-[#2b141d] dark:text-[#f7eef1] transition-colors duration-300 flex flex-col justify-between">
+      <div>
+        {/* Hide global navigation and panels if it's the secure Pay-For-Me route */}
+        {!isPayForMeRoute && (
+          <>
+            <Navbar />
+            <Sidebar />
+            <SearchOverlay />
+            <CartSidebar />
+            <ProfilePanel />
+            <LoginModal />
+          </>
+        )}
 
-app.use(
-  fileUpload({
-    useTempFiles: true,
-    tempFileDir: "./uploads",
-  })
-);
+        <Routes>
+          <Route path="/" element={<Index />} />
+          <Route path="/password/reset/:token" element={<Index />} />
+          <Route path="/products" element={<Products />} />
+          <Route path="/product/:id" element={<ProductDetail />} />
+          <Route path="/cart" element={<Cart />} />
+          <Route path="/orders" element={<Orders />} />
+          <Route path="/payment" element={<Payment />} />
+          <Route path="/pay-for-me/:token" element={<PayForMe />} />
+          <Route path="/about" element={<About />} />
+          <Route path="/faq" element={<FAQ />} />
+          <Route path="/contact" element={<Contact />} />
+          <Route path="*" element={<NotFound />} />
+        </Routes>
+      </div>
 
-app.use("/api/v1/auth", authRouter);
-app.use("/api/v1/product", productRouter);
-app.use("/api/v1/admin", adminRouter);
-app.use("/api/v1/order", orderRouter);
-app.use("/api/v1/payment", paymentRoutes);
+      {!isPayForMeRoute && <Footer />}
+    </div>
+  );
+};
 
-createTables();
+const App = () => {
+  return (
+    <ThemeProvider>
+      <BrowserRouter>
+        <MainLayout />
+        <ToastContainer position="bottom-right" theme="colored" autoClose={3000} />
+      </BrowserRouter>
+    </ThemeProvider>
+  );
+};
 
-app.use(errorMiddleware);
-
-export default app;
+export default App;
