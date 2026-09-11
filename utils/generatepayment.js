@@ -8,13 +8,12 @@ export async function generatePaymentIntent(orderId, totalPrice, paymentMethod =
       ? "https://securepay.sslcommerz.com/gwprocess/v4/api.v1.php" 
       : "https://sandbox.sslcommerz.com/gwprocess/v4/api.v1.php";
 
-    const store_id = process.env.SSLCOMMERZ_STORE_ID;
-    const store_passwd = process.env.SSLCOMMERZ_STORE_PASSWORD;
+   const store_id = process.env.SSLCOMMERZ_STORE_ID || process.env.SSL_STORE_ID;
+    const store_passwd = process.env.SSLCOMMERZ_STORE_PASSWORD || process.env.SSL_STORE_PASSWD;
 
     if (!store_id || !store_passwd) {
       throw new Error("SSLCommerz Store ID or Password is missing in environment variables.");
     }
-
     const frontendUrl = process.env.FRONTEND_URL || "https://omnivault-frontend-one.vercel.app";
     const backendUrl = process.env.BACKEND_URL || "https://omnivault-backend-83uu.onrender.com";
 
