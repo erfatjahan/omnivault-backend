@@ -8,12 +8,16 @@ import {
 import { isAuthenticated } from "../middlewares/authMiddleware.js";
 
 const router = express.Router();
+
 router.post("/ssl-init", isAuthenticated, initSSLPayment);
-router.post("/ssl-success", sslSuccess);
-router.get("/ssl-success", sslSuccess);
-router.post("/ssl-fail", sslFail);
-router.get("/ssl-fail", sslFail);
-router.post("/ssl-cancel", sslCancel);
-router.get("/ssl-cancel", sslCancel);
+
+router.post("/success/:orderId", sslSuccess);
+router.get("/success/:orderId", sslSuccess);
+
+router.post("/fail/:orderId", sslFail);
+router.get("/fail/:orderId", sslFail);
+
+router.post("/cancel/:orderId", sslCancel);
+router.get("/cancel/:orderId", sslCancel);
 
 export default router;
