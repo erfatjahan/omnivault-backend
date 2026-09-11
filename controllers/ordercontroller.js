@@ -128,6 +128,7 @@ export const placeNewOrder = catchAsyncErrors(async (req, res, next) => {
   }
 
   const client = await database.connect();
+  let released = false;
 
   try {
     await client.query("BEGIN");
@@ -170,6 +171,7 @@ export const placeNewOrder = catchAsyncErrors(async (req, res, next) => {
 
     await client.query("COMMIT");
     client.release();
+    released = true;
 
     if (sanitizedPaymentType === "COD") {
       return res.status(201).json({
@@ -201,7 +203,11 @@ export const placeNewOrder = catchAsyncErrors(async (req, res, next) => {
     });
   } catch (error) {
     await client.query("ROLLBACK");
-    client.release();
+    if (!released) {
+      try {
+        client.release();
+      } catch (e) {}
+    }
     return next(new ErrorHandler(error.message || "Failed to create order.", 500));
   }
 });
@@ -284,6 +290,7 @@ export const createPayForMeRequest = catchAsyncErrors(async (req, res, next) => 
   const paymentToken = crypto.randomBytes(20).toString("hex");
 
   const client = await database.connect();
+  let released = false;
 
   try {
     await client.query("BEGIN");
@@ -319,6 +326,7 @@ export const createPayForMeRequest = catchAsyncErrors(async (req, res, next) => 
 
     await client.query("COMMIT");
     client.release();
+    released = true;
 
     const frontendUrl = process.env.FRONTEND_URL || "https://omnivault-frontend-one.vercel.app";
     const cleanFrontendUrl = frontendUrl.replace(/\/+$/, "");
@@ -332,7 +340,11 @@ export const createPayForMeRequest = catchAsyncErrors(async (req, res, next) => 
     });
   } catch (error) {
     await client.query("ROLLBACK");
-    client.release();
+    if (!released) {
+      try {
+        client.release();
+      } catch (e) {}
+    }
     return next(new ErrorHandler(error.message || "Failed to generate pay-for-me link.", 500));
   }
 });
@@ -430,7 +442,7 @@ export const fetchSingleOrder = catchAsyncErrors(async (req, res, next) => {
       COALESCE(
         (
           SELECT json_agg(
-            json_build_order(
+            json_build_object(
               'id', oi.id,
               'product_id', oi.product_id,
               'title', oi.title,
@@ -682,6 +694,7 @@ export const cancelMyOrder = catchAsyncErrors(async (req, res, next) => {
   }
 
   const client = await database.connect();
+  let released = false;
 
   try {
     await client.query("BEGIN");
@@ -706,6 +719,8 @@ export const cancelMyOrder = catchAsyncErrors(async (req, res, next) => {
 
     await client.query("COMMIT");
     client.release();
+    released = true;
+
     const isPaidOnline = currentOrder.payment_status === "Paid";
     const refundedAmount = Number(currentOrder.total_price || 0).toFixed(2);
     const paymentGateway = currentOrder.payment_method || "original payment method";
@@ -723,7 +738,11 @@ export const cancelMyOrder = catchAsyncErrors(async (req, res, next) => {
     });
   } catch (error) {
     await client.query("ROLLBACK");
-    client.release();
+    if (!released) {
+      try {
+        client.release();
+      } catch (e) {}
+    }
     return next(new ErrorHandler(error.message || "Failed to cancel order.", 500));
   }
 });
