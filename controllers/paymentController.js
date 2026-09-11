@@ -1,16 +1,16 @@
 import SSLCommerzPayment from "sslcommerz-lts";
 import database from "../database/db.js";
 
-const store_id = process.env.SSL_STORE_ID || "testbox";
-const store_passwd = process.env.SSL_STORE_PASSWD || "qwerty";
-const is_live = false; // Sandbox testing er jonno false
+const store_id = process.env.SSLCOMMERZ_STORE_ID || process.env.SSL_STORE_ID || "testbox";
+const store_passwd = process.env.SSLCOMMERZ_STORE_PASSWORD || process.env.SSL_STORE_PASSWD || "qwerty";
+const is_live = process.env.SSLCOMMERZ_IS_LIVE === "true";  
 
 export const initSSLPayment = async (req, res, next) => {
   try {
     const { orderId, totalPrice, shippingInfo } = req.body;
     const tran_id = `TXN_${orderId || Date.now()}_${Math.floor(Math.random() * 1000)}`;
 
-    const serverUrl = process.env.SERVER_URL || "http://localhost:5000";
+    const serverUrl = process.env.BACKEND_URL || process.env.SERVER_URL || "https://omnivault-backend-83uu.onrender.com";
 
     const data = {
       total_amount: Number(totalPrice) || 100,
@@ -21,20 +21,20 @@ export const initSSLPayment = async (req, res, next) => {
       cancel_url: `${serverUrl}/api/v1/payment/ssl-cancel?tran_id=${tran_id}&order_id=${orderId}`,
       ipn_url: `${serverUrl}/api/v1/payment/ssl-ipn`,
       shipping_method: "Courier",
-      product_name: "Ecommerce Order",
+      product_name: "OmniVault Order Items",
       product_category: "General",
       product_profile: "general",
-      cus_name: shippingInfo?.fullName || "Test Customer",
-      cus_email: "customer@example.com",
-      cus_add1: shippingInfo?.address || "Chattogram, Bangladesh",
-      cus_city: shippingInfo?.city || "Chattogram",
+      cus_name: shippingInfo?.fullName || shippingInfo?.full_name || "Valued Customer",
+      cus_email: "customer@omnivault.com",
+      cus_add1: shippingInfo?.address || "Chittagong",
+      cus_city: shippingInfo?.city || "Chittagong",
       cus_state: shippingInfo?.state || "Chittagong",
       cus_postcode: shippingInfo?.pincode || "4000",
       cus_country: "Bangladesh",
       cus_phone: shippingInfo?.phone || "01700000000",
-      ship_name: shippingInfo?.fullName || "Test Customer",
-      ship_add1: shippingInfo?.address || "Chattogram, Bangladesh",
-      ship_city: shippingInfo?.city || "Chattogram",
+      ship_name: shippingInfo?.fullName || shippingInfo?.full_name || "Valued Customer",
+      ship_add1: shippingInfo?.address || "Chittagong",
+      ship_city: shippingInfo?.city || "Chittagong",
       ship_state: shippingInfo?.state || "Chittagong",
       ship_postcode: shippingInfo?.pincode || "4000",
       ship_country: "Bangladesh",
@@ -47,6 +47,7 @@ export const initSSLPayment = async (req, res, next) => {
       return res.status(200).json({
         success: true,
         gatewayUrl: apiResponse.GatewayPageURL,
+        paymentUrl: apiResponse.GatewayPageURL,
       });
     }
 
@@ -65,20 +66,25 @@ export const sslSuccess = async (req, res, next) => {
     const tran_id = req.query.tran_id || req.body.tran_id;
     const order_id = req.query.order_id || req.body.value_a;
 
-    const clientUrl = process.env.CLIENT_URL || "http://localhost:5173";
+    const clientUrl = process.env.FRONTEND_URL || process.env.CLIENT_URL || "https://omnivault-frontend-one.vercel.app";
 
     if (order_id) {
       await database.query(
         `UPDATE orders 
-         SET payment_status = 'Paid', transaction_id = $1 
-         WHERE id = $2`,
+         SET payment_status = 'Paid', order_status = 'Processing', transaction_id = $1, paid_at = CURRENT_TIMESTAMP 
+         WHERE id::text = $2::text`,
         [tran_id, order_id]
+      );
+      
+      await database.query(
+        `UPDATE payments SET payment_status = 'Success' WHERE order_id::text = $1::text`,
+        [order_id]
       );
     }
     return res.redirect(`${clientUrl}/orders?status=success`);
   } catch (error) {
     console.error("SSL Success Callback Error:", error);
-    const clientUrl = process.env.CLIENT_URL || "http://localhost:5173";
+    const clientUrl = process.env.FRONTEND_URL || process.env.CLIENT_URL || "https://omnivault-frontend-one.vercel.app";
     return res.redirect(`${clientUrl}/orders?status=failed`);
   }
 };
@@ -86,13 +92,13 @@ export const sslSuccess = async (req, res, next) => {
 export const sslFail = async (req, res, next) => {
   try {
     const order_id = req.query.order_id || req.body.value_a;
-    const clientUrl = process.env.CLIENT_URL || "http://localhost:5173";
+    const clientUrl = process.env.FRONTEND_URL || process.env.CLIENT_URL || "https://omnivault-frontend-one.vercel.app";
 
     if (order_id) {
       await database.query(
         `UPDATE orders 
          SET payment_status = 'Failed' 
-         WHERE id = $1`,
+         WHERE id::text = $1::text`,
         [order_id]
       );
     }
@@ -100,7 +106,7 @@ export const sslFail = async (req, res, next) => {
     return res.redirect(`${clientUrl}/orders?status=failed`);
   } catch (error) {
     console.error("SSL Fail Callback Error:", error);
-    const clientUrl = process.env.CLIENT_URL || "http://localhost:5173";
+    const clientUrl = process.env.FRONTEND_URL || process.env.CLIENT_URL || "https://omnivault-frontend-one.vercel.app";
     return res.redirect(`${clientUrl}/orders?status=failed`);
   }
 };
@@ -108,13 +114,13 @@ export const sslFail = async (req, res, next) => {
 export const sslCancel = async (req, res, next) => {
   try {
     const order_id = req.query.order_id || req.body.value_a;
-    const clientUrl = process.env.CLIENT_URL || "http://localhost:5173";
+    const clientUrl = process.env.FRONTEND_URL || process.env.CLIENT_URL || "https://omnivault-frontend-one.vercel.app";
 
     if (order_id) {
       await database.query(
         `UPDATE orders 
          SET payment_status = 'Cancelled' 
-         WHERE id = $1`,
+         WHERE id::text = $1::text`,
         [order_id]
       );
     }
@@ -122,7 +128,7 @@ export const sslCancel = async (req, res, next) => {
     return res.redirect(`${clientUrl}/orders?status=cancelled`);
   } catch (error) {
     console.error("SSL Cancel Callback Error:", error);
-    const clientUrl = process.env.CLIENT_URL || "http://localhost:5173";
+    const clientUrl = process.env.FRONTEND_URL || process.env.CLIENT_URL || "https://omnivault-frontend-one.vercel.app";
     return res.redirect(`${clientUrl}/orders?status=cancelled`);
   }
 };
