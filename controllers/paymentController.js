@@ -1,5 +1,6 @@
 import SSLCommerzPayment from "sslcommerz-lts";
 import database from "../database/db.js";
+import { generatePaymentIntent } from "../utils/generatepayment.js";
 
 const store_id = process.env.SSLCOMMERZ_STORE_ID || process.env.SSL_STORE_ID || "testbox";
 const store_passwd = process.env.SSLCOMMERZ_STORE_PASSWORD || process.env.SSL_STORE_PASSWD || "qwerty";
@@ -8,52 +9,27 @@ const is_live = process.env.SSLCOMMERZ_IS_LIVE === "true";
 export const initSSLPayment = async (req, res, next) => {
   try {
     const { orderId, totalPrice, shippingInfo } = req.body;
-    const tran_id = `TXN_${orderId || Date.now()}_${Math.floor(Math.random() * 1000)}`;
 
-    const serverUrl = process.env.BACKEND_URL || process.env.SERVER_URL || "https://omnivault-backend-83uu.onrender.com";
+    if (!orderId) {
+      return res.status(400).json({
+        success: false,
+        message: "Order ID is required to initiate payment.",
+      });
+    }
 
-    const data = {
-      total_amount: Number(totalPrice) || 100,
-      currency: "BDT",
-      tran_id: tran_id,
-      success_url: `${serverUrl}/api/v1/payment/ssl-success?tran_id=${tran_id}&order_id=${orderId}`,
-      fail_url: `${serverUrl}/api/v1/payment/ssl-fail?tran_id=${tran_id}&order_id=${orderId}`,
-      cancel_url: `${serverUrl}/api/v1/payment/ssl-cancel?tran_id=${tran_id}&order_id=${orderId}`,
-      ipn_url: `${serverUrl}/api/v1/payment/ssl-ipn`,
-      shipping_method: "Courier",
-      product_name: "OmniVault Order Items",
-      product_category: "General",
-      product_profile: "general",
-      cus_name: shippingInfo?.fullName || shippingInfo?.full_name || "Valued Customer",
-      cus_email: "customer@omnivault.com",
-      cus_add1: shippingInfo?.address || "Chittagong",
-      cus_city: shippingInfo?.city || "Chittagong",
-      cus_state: shippingInfo?.state || "Chittagong",
-      cus_postcode: shippingInfo?.pincode || "4000",
-      cus_country: "Bangladesh",
-      cus_phone: shippingInfo?.phone || "01700000000",
-      ship_name: shippingInfo?.fullName || shippingInfo?.full_name || "Valued Customer",
-      ship_add1: shippingInfo?.address || "Chittagong",
-      ship_city: shippingInfo?.city || "Chittagong",
-      ship_state: shippingInfo?.state || "Chittagong",
-      ship_postcode: shippingInfo?.pincode || "4000",
-      ship_country: "Bangladesh",
-    };
+    const paymentResponse = await generatePaymentIntent(orderId, totalPrice, "SSLCommerz");
 
-    const sslcz = new SSLCommerzPayment(store_id, store_passwd, is_live);
-    const apiResponse = await sslcz.init(data);
-
-    if (apiResponse?.GatewayPageURL) {
+    if (paymentResponse.success && paymentResponse.paymentUrl) {
       return res.status(200).json({
         success: true,
-        gatewayUrl: apiResponse.GatewayPageURL,
-        paymentUrl: apiResponse.GatewayPageURL,
+        gatewayUrl: paymentResponse.paymentUrl,
+        paymentUrl: paymentResponse.paymentUrl,
       });
     }
 
     return res.status(400).json({
       success: false,
-      message: apiResponse?.failedreason || "SSLCommerz session failed to initialize.",
+      message: paymentResponse.message || "SSLCommerz session failed to initialize.",
     });
   } catch (error) {
     console.error("SSL Init Error:", error);
@@ -76,10 +52,13 @@ export const sslSuccess = async (req, res, next) => {
         [tran_id, order_id]
       );
       
-      await database.query(
-        `UPDATE payments SET payment_status = 'Success' WHERE order_id::text = $1::text`,
-        [order_id]
-      );
+      try {
+        await database.query(
+          `UPDATE payments SET payment_status = 'Success' WHERE order_id::text = $1::text`,
+          [order_id]
+        );
+      } catch (err) {
+      }
     }
     return res.redirect(`${clientUrl}/orders?status=success`);
   } catch (error) {
