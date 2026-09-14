@@ -14,10 +14,10 @@ export async function generatePaymentIntent(orderId, totalPrice, paymentMethod =
       total_amount: Number(totalPrice) || 100,
       currency: "BDT",
       tran_id: tran_id,
-      success_url: `${backendUrl}/api/v1/payment/success/${orderId}?tran_id=${tran_id}&order_id=${orderId}`,
-      fail_url: `${backendUrl}/api/v1/payment/fail/${orderId}?tran_id=${tran_id}&order_id=${orderId}`,
-      cancel_url: `${backendUrl}/api/v1/payment/cancel/${orderId}?tran_id=${tran_id}&order_id=${orderId}`,
-      ipn_url: `${backendUrl}/api/v1/payment/ipn`,
+      success_url: `${backendUrl}/api/v1/payment/ssl-success?tran_id=${tran_id}&order_id=${orderId}`,
+      fail_url: `${backendUrl}/api/v1/payment/ssl-fail?tran_id=${tran_id}&order_id=${orderId}`,
+      cancel_url: `${backendUrl}/api/v1/payment/ssl-cancel?tran_id=${tran_id}&order_id=${orderId}`,
+      ipn_url: `${backendUrl}/api/v1/payment/ssl-ipn`,
       shipping_method: "Courier",
       product_name: "OmniVault Order Items",
       product_category: "General",
@@ -48,7 +48,6 @@ export async function generatePaymentIntent(orderId, totalPrice, paymentMethod =
           [orderId, paymentMethod, "Pending", apiResponse.sessionkey || tran_id]
         );
       } catch (dbErr) {
-    
       }
 
       return {
