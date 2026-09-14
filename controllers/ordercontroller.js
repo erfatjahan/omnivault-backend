@@ -5,6 +5,12 @@ import { generatePaymentIntent } from "../utils/generatepayment.js";
 import crypto from "crypto";
 
 export const placeNewOrder = catchAsyncErrors(async (req, res, next) => {
+  const userId = req.user?.id || req.user?._id;
+
+  if (!userId) {
+    return next(new ErrorHandler("Please login to place an order.", 401));
+  }
+
   const rawShipping = req.body.shipping_info || req.body.shippingInfo || {};
 
   const full_name = (req.body.full_name || rawShipping.full_name || rawShipping.fullName || "").trim();
@@ -137,7 +143,7 @@ export const placeNewOrder = catchAsyncErrors(async (req, res, next) => {
       `INSERT INTO orders (
         buyer_id, total_price, tax_price, shipping_price, order_status, payment_status, payment_method
       ) VALUES ($1, $2, $3, $4, 'Pending', 'Unpaid', $5) RETURNING *`,
-      [req.user.id, total_price, tax_price, shipping_price, sanitizedPaymentType]
+      [userId, total_price, tax_price, shipping_price, sanitizedPaymentType]
     );
 
     const orderId = orderResult.rows[0].id;
@@ -207,11 +213,17 @@ export const placeNewOrder = catchAsyncErrors(async (req, res, next) => {
         client.release();
       } catch (e) {}
     }
+    console.error("ORDER CREATION ERROR:", error.message, error.stack);
     return next(new ErrorHandler(error.message || "Failed to create order.", 500));
   }
 });
 
 export const createPayForMeRequest = catchAsyncErrors(async (req, res, next) => {
+  const userId = req.user?.id || req.user?._id;
+  if (!userId) {
+    return next(new ErrorHandler("Please login to create pay-for-me request.", 401));
+  }
+
   const rawShipping = req.body.shipping_info || req.body.shippingInfo || {};
 
   const full_name = (req.body.full_name || rawShipping.full_name || rawShipping.fullName || "").trim();
@@ -298,7 +310,7 @@ export const createPayForMeRequest = catchAsyncErrors(async (req, res, next) => 
       `INSERT INTO orders (
         buyer_id, total_price, tax_price, shipping_price, order_status, payment_status, payment_method, is_pay_for_me, payment_link_token
       ) VALUES ($1, $2, $3, $4, 'Pending', 'Unpaid', $5, TRUE, $6) RETURNING *`,
-      [req.user.id, total_price, tax_price, shipping_price, payment_method, paymentToken]
+      [userId, total_price, tax_price, shipping_price, payment_method, paymentToken]
     );
 
     const orderId = orderResult.rows[0].id;
