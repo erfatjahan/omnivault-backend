@@ -44,7 +44,22 @@ export const sslSuccess = async (req, res, next) => {
 
     const clientUrl = process.env.FRONTEND_URL || process.env.CLIENT_URL || "https://omnivault-frontend-one.vercel.app";
 
+    let isPayForMeOrder = false;
+
     if (order_id) {
+           try {
+        const orderCheck = await database.query(
+          `SELECT is_pay_for_me FROM orders WHERE id::text = $1::text`,
+          [order_id]
+        );
+        
+        if (orderCheck.rows.length > 0) {
+          isPayForMeOrder = orderCheck.rows[0].is_pay_for_me;
+        }
+      } catch (dbErr) {
+        isPayForMeOrder = false;
+      }
+
       await database.query(
         `UPDATE orders 
          SET payment_status = 'Paid', order_status = 'Processing', transaction_id = $1, paid_at = CURRENT_TIMESTAMP 
@@ -57,9 +72,13 @@ export const sslSuccess = async (req, res, next) => {
           `UPDATE payments SET payment_status = 'Success' WHERE order_id::text = $1::text`,
           [order_id]
         );
-      } catch (err) {
-      }
+      } catch (err) {}
     }
+
+    if (isPayForMeOrder) {
+      return res.redirect(`${clientUrl}/payment-success?type=pay-for-me`);
+    }
+
     return res.redirect(`${clientUrl}/orders?status=success`);
   } catch (error) {
     console.error("SSL Success Callback Error:", error);
