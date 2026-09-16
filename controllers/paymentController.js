@@ -102,14 +102,6 @@ export const sslSuccess = async (req, res, next) => {
         );
       } catch (err) {}
 
-      try {
-        await database.query(
-          `DELETE FROM carts WHERE user_id = (SELECT buyer_id FROM orders WHERE id::text = $1::text)`,
-          [order_id]
-        );
-      } catch (cartErr) {
-        console.error("Cart clear error:", cartErr);
-      }
     }
 
     if (isPayForMeOrder) {
