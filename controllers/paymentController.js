@@ -17,6 +17,18 @@ export const initSSLPayment = async (req, res, next) => {
       });
     }
 
+    const orderCheck = await database.query(
+      `SELECT payment_status FROM orders WHERE id::text = $1::text`,
+      [orderId]
+    );
+
+    if (orderCheck.rows.length > 0 && orderCheck.rows[0].payment_status === 'Paid') {
+      return res.status(400).json({
+        success: false,
+        message: "This order has already been paid. Duplicate payment is not allowed.",
+      });
+    }
+
     const paymentResponse = await generatePaymentIntent(orderId, totalPrice, "SSLCommerz");
 
     if (paymentResponse.success && paymentResponse.paymentUrl) {
@@ -78,7 +90,7 @@ export const sslSuccess = async (req, res, next) => {
 
       await database.query(
         `UPDATE orders 
-         SET payment_status = 'Paid', order_status = 'Processing', transaction_id = $1, paid_at = CURRENT_TIMESTAMP, pay_for_me_token = NULL 
+         SET payment_status = 'Paid', order_status = 'Processing', transaction_id = $1, paid_at = CURRENT_TIMESTAMP, payment_link_token = NULL 
          WHERE id::text = $2::text`,
         [tran_id, order_id]
       );
@@ -92,7 +104,7 @@ export const sslSuccess = async (req, res, next) => {
 
       try {
         await database.query(
-          `DELETE FROM carts WHERE user_id = (SELECT user_id FROM orders WHERE id::text = $1::text)`,
+          `DELETE FROM carts WHERE user_id = (SELECT buyer_id FROM orders WHERE id::text = $1::text)`,
           [order_id]
         );
       } catch (cartErr) {
