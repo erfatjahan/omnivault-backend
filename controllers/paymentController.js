@@ -47,14 +47,18 @@ export const sslSuccess = async (req, res, next) => {
     let isPayForMeOrder = false;
 
     if (order_id) {
-           try {
+      try {
         const orderCheck = await database.query(
-          `SELECT is_pay_for_me FROM orders WHERE id::text = $1::text`,
+          `SELECT is_pay_for_me, payment_status FROM orders WHERE id::text = $1::text`,
           [order_id]
         );
         
         if (orderCheck.rows.length > 0) {
           isPayForMeOrder = orderCheck.rows[0].is_pay_for_me;
+
+          if (orderCheck.rows.length > 0 && orderCheck.rows[0].payment_status === 'Paid') {
+            return res.redirect(`${clientUrl}/payment-success?type=pay-for-me`);
+          }
         }
       } catch (dbErr) {
         isPayForMeOrder = false;
@@ -62,7 +66,7 @@ export const sslSuccess = async (req, res, next) => {
 
       await database.query(
         `UPDATE orders 
-         SET payment_status = 'Paid', order_status = 'Processing', transaction_id = $1, paid_at = CURRENT_TIMESTAMP 
+         SET payment_status = 'Paid', order_status = 'Processing', transaction_id = $1, paid_at = CURRENT_TIMESTAMP, pay_for_me_token = NULL 
          WHERE id::text = $2::text`,
         [tran_id, order_id]
       );
