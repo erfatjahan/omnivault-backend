@@ -56,7 +56,7 @@ export const sslSuccess = async (req, res, next) => {
         if (orderCheck.rows.length > 0) {
           isPayForMeOrder = orderCheck.rows[0].is_pay_for_me;
 
-          if (orderCheck.rows.length > 0 && orderCheck.rows[0].payment_status === 'Paid') {
+          if (orderCheck.rows[0].payment_status === 'Paid') {
             return res.redirect(`${clientUrl}/payment-success?type=pay-for-me`);
           }
         }
@@ -77,6 +77,15 @@ export const sslSuccess = async (req, res, next) => {
           [order_id]
         );
       } catch (err) {}
+
+      try {
+        await database.query(
+          `DELETE FROM carts WHERE user_id = (SELECT user_id FROM orders WHERE id::text = $1::text)`,
+          [order_id]
+        );
+      } catch (cartErr) {
+        console.error("Cart clear error:", cartErr);
+      }
     }
 
     if (isPayForMeOrder) {
