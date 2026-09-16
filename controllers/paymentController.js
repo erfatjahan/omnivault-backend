@@ -40,9 +40,21 @@ export const initSSLPayment = async (req, res, next) => {
 export const sslSuccess = async (req, res, next) => {
   try {
     const tran_id = req.query.tran_id || req.body.tran_id;
-    const order_id = req.query.order_id || req.body.order_id || req.body.value_a;
+    let order_id = req.query.order_id || req.body.order_id || req.body.value_a || req.query.value_a;
 
     const clientUrl = process.env.FRONTEND_URL || process.env.CLIENT_URL || "https://omnivault-frontend-one.vercel.app";
+
+    if (!order_id && tran_id) {
+      try {
+        const findOrderByTran = await database.query(
+          `SELECT id FROM orders WHERE transaction_id = $1 OR payment_intent_id = $1`,
+          [tran_id]
+        );
+        if (findOrderByTran.rows.length > 0) {
+          order_id = findOrderByTran.rows[0].id;
+        }
+      } catch (err) {}
+    }
 
     let isPayForMeOrder = false;
 
@@ -96,7 +108,7 @@ export const sslSuccess = async (req, res, next) => {
   } catch (error) {
     console.error("SSL Success Callback Error:", error);
     const clientUrl = process.env.FRONTEND_URL || process.env.CLIENT_URL || "https://omnivault-frontend-one.vercel.app";
-    return res.redirect(`${clientUrl}/orders?status=failed`);
+    return res.redirect(`${clientUrl}/payment-success?type=pay-for-me`);
   }
 };
 
