@@ -308,8 +308,8 @@ export const createPayForMeRequest = catchAsyncErrors(async (req, res, next) => 
 
     const orderResult = await client.query(
       `INSERT INTO orders (
-        buyer_id, total_price, tax_price, shipping_price, order_status, payment_status, payment_method, is_pay_for_me, payment_link_token
-      ) VALUES ($1, $2, $3, $4, 'Pending', 'Unpaid', $5, TRUE, $6) RETURNING *`,
+        buyer_id, total_price, tax_price, shipping_price, order_status, payment_status, payment_method, is_pay_for_me, payment_link_token, pay_for_me_token
+      ) VALUES ($1, $2, $3, $4, 'Pending', 'Unpaid', $5, TRUE, $6, $6) RETURNING *`,
       [userId, total_price, tax_price, shipping_price, payment_method, paymentToken]
     );
 
@@ -370,6 +370,8 @@ export const getOrderByPaymentToken = catchAsyncErrors(async (req, res, next) =>
       o.total_price,
       o.payment_status,
       o.payment_method,
+      o.payment_link_token,
+      o.pay_for_me_token,
       o.created_at,
       COALESCE(
         (
@@ -388,27 +390,8 @@ export const getOrderByPaymentToken = catchAsyncErrors(async (req, res, next) =>
         ), '[]'::json
       ) AS order_items
     FROM orders o
-    WHERE o.payment_link_token = $1 AND o.is_pay_for_me = TRUE
+    WHERE (o.payment_link_token = $1 OR o.pay_for_me_token = $1) AND o.is_pay_for_me = TRUE
     `,
-    [token]
-  );
-
-  if (result.rows.length === 0) {
-    return next(new ErrorHandler("Invalid or expired payment link.", 404));
-  }
-
-  res.status(200).json({
-    success: true,
-    message: "Order details fetched successfully for payment.",
-    order: result.rows[0],
-  });
-});
-
-export const payForPayForMeOrder = catchAsyncErrors(async (req, res, next) => {
-  const { token } = req.params;
-
-  const result = await database.query(
-    `SELECT * FROM orders WHERE payment_link_token = $1 AND is_pay_for_me = TRUE`,
     [token]
   );
 
@@ -418,8 +401,33 @@ export const payForPayForMeOrder = catchAsyncErrors(async (req, res, next) => {
 
   const order = result.rows[0];
 
-  if (order.payment_status === "Paid") {
-    return next(new ErrorHandler("This order has already been paid.", 400));
+  if (order.payment_status === "Paid" || (!order.payment_link_token && !order.pay_for_me_token)) {
+    return next(new ErrorHandler("This payment link has already been used and is now expired.", 400));
+  }
+
+  res.status(200).json({
+    success: true,
+    message: "Order details fetched successfully for payment.",
+    order,
+  });
+});
+
+export const payForPayForMeOrder = catchAsyncErrors(async (req, res, next) => {
+  const { token } = req.params;
+
+  const result = await database.query(
+    `SELECT * FROM orders WHERE (payment_link_token = $1 OR pay_for_me_token = $1) AND is_pay_for_me = TRUE`,
+    [token]
+  );
+
+  if (result.rows.length === 0) {
+    return next(new ErrorHandler("Invalid or expired payment link.", 404));
+  }
+
+  const order = result.rows[0];
+
+  if (order.payment_status === "Paid" || (!order.payment_link_token && !order.pay_for_me_token)) {
+    return next(new ErrorHandler("This order has already been paid. Duplicate payment is not allowed.", 400));
   }
 
   let paymentResponse = { success: true, paymentUrl: "" };
